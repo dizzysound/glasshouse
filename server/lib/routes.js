@@ -8,6 +8,7 @@ var zlib = require('zlib');
 var crypto = require('crypto');
 var http = require('http');
 var say = require('./say');
+var lutSlots = require('./lutslots');
 var localAddress4 = require('./util').localAddress4;
 var localAddress6 = require('./util').localAddress6;
 var listenDualStack = require('./util').listenDualStack;
@@ -2020,6 +2021,13 @@ function handleRequest(req, res) {
     return tvApp('status', function (r) {
       if (r && r.ok) r.writable = config.allowControl;
       send(res, 200, JSON.stringify(r));
+    });
+  }
+
+  // Stored picture-calibration files (size and checksum only), where the TV has them.
+  if (pathname === '/api/lutslots') {
+    return lutSlots.readSlots(function (r) {
+      send(res, 200, JSON.stringify({ ok: true, available: !!r.available, slots: r.slots || [] }));
     });
   }
 
