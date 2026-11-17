@@ -195,6 +195,14 @@ stops them too. Results and launch targets stay in memory.
 Aborted package uploads close their staging file even when the abort arrives
 before the file opens on Node 0.12, then remove the file.
 
+## Stored calibration files
+
+The OLED Care tab lists the picture calibration files in
+`/mnt/lg/cmn_data/external_pqldb` with their size and SHA-256. The files are
+opened for reading only and their contents are never sent to the browser or
+logged. Nothing is shown, and `/api/lutslots` reports `available: false`,
+where the folder does not exist.
+
 ## Home-screen app port
 
 Glasshouse Home's page, staged in `/var/lib/tvweb/home-takeover` and mounted over LG's Home, has the port filled in the same way each time the server stages it.

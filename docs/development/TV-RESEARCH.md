@@ -3736,3 +3736,21 @@ refuses to start any service named in
 one that is not running fails at once. The C2 has neither file. On the C2 the
 hub starts `/usr/sbin/accountmanager` on demand, and with a program that exits
 at once mounted over it, the same call was still waiting after 90 s.
+
+## Stored calibration files (rooted LG OLED)
+
+A 1D LUT, 3D LUT, 3x3 gamut matrix or enable flag written to the picture
+service is stored in `/mnt/lg/cmn_data/external_pqldb/<mode>_<profileN>_<RECORD>`
+(for example `hdr_filmMaker_profile0_...`). Sizes: the 1D file is 3072
+little-endian 16-bit values (6144 bytes); the 3D file is 33 x 33 x 33 x 3 of
+them (215622 bytes).
+
+* This is the stored state. A write sent with `dataOpt` 0 stays in RAM and does
+  not appear in these files.
+* The file follows the picture mode a calibration session was started in, not
+  the mode on screen.
+* `getTemporalPeakControl` and `getGlobalStressReduction` report the stored
+  switch, not the live panel value.
+
+Not yet confirmed on a TV: that the file prefix equals the mode name given when
+the calibration starts, and that a stored upload changes the file each time.
