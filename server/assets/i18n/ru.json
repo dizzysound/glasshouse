@@ -3327,5 +3327,9 @@
  "srv.home.wallPicture": {"text": "неизвестная фоновая картинка", "from": "unknown wallpaper picture"},
  "srv.home.wallShuffleFull": {"text": "В коллекции может быть до {max} картинок. Удалите одну, чтобы добавить другую.", "from": "The collection holds {max} pictures. Remove one to add another."},
  "inputs.bar.switchOnOk": {"text": "Переключать только по OK", "from": "Switch only on OK"},
- "inputs.bar.switchOnOkDesc": {"text": "Перемещение по панели только выбирает вход, а OK переключает на него. Если выключено, телевизор переключается через секунду после последнего нажатия.", "from": "Moving along the bar only picks an input, and OK switches to it. Off, the TV switches a second after the last press."}
+ "inputs.bar.switchOnOkDesc": {"text": "Перемещение по панели только выбирает вход, а OK переключает на него. Если выключено, телевизор переключается через секунду после последнего нажатия.", "from": "Moving along the bar only picks an input, and OK switches to it. Off, the TV switches a second after the last press."},
+ "oled.slots": {"text": "Сохранённые файлы калибровки", "from": "Stored calibration files"},
+ "oled.slots.note": {"text": "Сохранённое состояние, прочитанное из файлов на телевизоре. Запись калибровки, которая не сохранена, остаётся в памяти и здесь не видна; каждый файл относится к режиму изображения, в котором запущена калибровка, а не к режиму на экране.", "from": "Stored state, read from the files on the TV. A calibration write that is not saved stays in memory and does not show here, and each file belongs to the picture mode a calibration was started in, not the mode on screen."},
+ "oled.slots.size": {"text": "{n} байт", "from": "{n} bytes"},
+ "oled.slots.badSize": {"text": "неожиданный размер", "from": "unexpected size"}
 }

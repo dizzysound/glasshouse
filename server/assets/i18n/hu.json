@@ -3327,5 +3327,9 @@
  "srv.remoteKeys.ok": {"text": "OK", "from": "OK"},
  "apps.remoteKeys.buttons": {"text": "Gombok", "from": "Buttons"},
  "inputs.bar.switchOnOk": {"text": "Váltás csak OK-ra", "from": "Switch only on OK"},
- "inputs.bar.switchOnOkDesc": {"text": "A sávon való mozgás csak kijelöl egy bemenetet, és az OK vált rá. Kikapcsolva a TV egy másodperccel az utolsó gombnyomás után vált.", "from": "Moving along the bar only picks an input, and OK switches to it. Off, the TV switches a second after the last press."}
+ "inputs.bar.switchOnOkDesc": {"text": "A sávon való mozgás csak kijelöl egy bemenetet, és az OK vált rá. Kikapcsolva a TV egy másodperccel az utolsó gombnyomás után vált.", "from": "Moving along the bar only picks an input, and OK switches to it. Off, the TV switches a second after the last press."},
+ "oled.slots": {"text": "Mentett kalibrációs fájlok", "from": "Stored calibration files"},
+ "oled.slots.note": {"text": "Mentett állapot, a tévén lévő fájlokból olvasva. A nem mentett kalibrációs írás a memóriában marad, és itt nem jelenik meg; minden fájl ahhoz a képmódhoz tartozik, amelyben a kalibrációt elindították, nem a képernyőn látható módhoz.", "from": "Stored state, read from the files on the TV. A calibration write that is not saved stays in memory and does not show here, and each file belongs to the picture mode a calibration was started in, not the mode on screen."},
+ "oled.slots.size": {"text": "{n} bájt", "from": "{n} bytes"},
+ "oled.slots.badSize": {"text": "váratlan méret", "from": "unexpected size"}
 }

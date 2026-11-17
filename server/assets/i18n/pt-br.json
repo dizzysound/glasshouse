@@ -3313,5 +3313,9 @@
  "srv.remoteKeys.ok": {"text": "OK", "from": "OK"},
  "apps.remoteKeys.buttons": {"text": "Botões", "from": "Buttons"},
  "inputs.bar.switchOnOk": {"text": "Trocar só com OK", "from": "Switch only on OK"},
- "inputs.bar.switchOnOkDesc": {"text": "Percorrer a barra apenas escolhe uma entrada, e o OK troca para ela. Desligado, a TV troca um segundo após o último toque.", "from": "Moving along the bar only picks an input, and OK switches to it. Off, the TV switches a second after the last press."}
+ "inputs.bar.switchOnOkDesc": {"text": "Percorrer a barra apenas escolhe uma entrada, e o OK troca para ela. Desligado, a TV troca um segundo após o último toque.", "from": "Moving along the bar only picks an input, and OK switches to it. Off, the TV switches a second after the last press."},
+ "oled.slots": {"text": "Arquivos de calibração salvos", "from": "Stored calibration files"},
+ "oled.slots.note": {"text": "Estado salvo, lido dos arquivos da TV. Uma gravação de calibração não salva fica na memória e não aparece aqui, e cada arquivo pertence ao modo de imagem em que uma calibração foi iniciada, não ao modo exibido na tela.", "from": "Stored state, read from the files on the TV. A calibration write that is not saved stays in memory and does not show here, and each file belongs to the picture mode a calibration was started in, not the mode on screen."},
+ "oled.slots.size": {"text": "{n} bytes", "from": "{n} bytes"},
+ "oled.slots.badSize": {"text": "tamanho inesperado", "from": "unexpected size"}
 }
