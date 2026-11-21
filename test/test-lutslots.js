@@ -37,11 +37,29 @@ lutslots.readSlots(function (r) {
   assert.strictEqual(r.slots[0].sha256.length, 64);
   assert.strictEqual(r.slots[1].sizeMatches, false);
   assert.ok(!r.slots[0].hasOwnProperty('data'));
-  lutslots.init({ dir: path.join(tmp, 'absent') });
-  lutslots.readSlots(function (none) {
-    assert.strictEqual(none.available, false);
-    fs.readdirSync(tmp).forEach(function (n) { fs.unlinkSync(path.join(tmp, n)); });
-    fs.rmdirSync(tmp);
-    console.log('  PASS test-lutslots.js');
+  lutslots.readTable('GET_1D_DPG_DATA', 'cinema', 0, function (t) {
+    assert.strictEqual(t.returnValue, true);
+    assert.strictEqual(t.dataCount, 3072);
+    assert.strictEqual(t.source, 'stored');
+    assert.strictEqual(new Buffer(t.data, 'base64').length, 6144);
+    lutslots.readTable('GET_3D_LUT_DATA', 'cinema', 0, function (m) {
+      assert.strictEqual(m.returnValue, false);
+      lutslots.readTable('GET_CHARACTERISTICS', 'cinema', 0, function (u) {
+        assert.strictEqual(u.returnValue, false);
+        lutslots.readTable('GET_1D_DPG_DATA', '../x', 0, function (bad) {
+          assert.strictEqual(bad.returnValue, false);
+          finish();
+        });
+      });
+    });
   });
+  function finish() {
+    lutslots.init({ dir: path.join(tmp, 'absent') });
+    lutslots.readSlots(function (none) {
+      assert.strictEqual(none.available, false);
+      fs.readdirSync(tmp).forEach(function (n) { fs.unlinkSync(path.join(tmp, n)); });
+      fs.rmdirSync(tmp);
+      console.log('  PASS test-lutslots.js');
+    });
+  }
 });

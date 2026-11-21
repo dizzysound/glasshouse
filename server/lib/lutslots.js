@@ -77,8 +77,46 @@ function readSlots(cb) {
   });
 }
 
+// The two table reads a modern LG answers through externalpq/getExternalPqData.
+var TABLES = {
+  GET_1D_DPG_DATA: { suffix: '1D_DPG_DATA', bytes: 6144, count: 3072, type: 'uint16' },
+  GET_3D_LUT_DATA: { suffix: '3D_LUT_DATA', bytes: 215622, count: 107811, type: 'uint16' }
+};
+
+function tableFailure(text) {
+  return { returnValue: false, errorText: text };
+}
+
+/**
+ * Answers getExternalPqData for one command from the stored slot file:
+ * { returnValue, data (base64 little-endian uint16), dataCount, dataType,
+ * source: 'stored' }. It is the file, never the live picture state, and a
+ * write sent with dataOpt 0 is not in it. Anything else, or a missing or
+ * wrongly sized file, gets the failure reply the C1 itself gives.
+ */
+function readTable(command, picMode, profileNo, cb) {
+  var table = TABLES.hasOwnProperty(command) ? TABLES[command] : null;
+  if (!table) return cb(tableFailure('unsupported command'));
+  var profile = 'profile' + (profileNo === undefined || profileNo === null ? 0 : profileNo);
+  if (!/^[A-Za-z0-9_]+$/.test(String(picMode || '')) || !/^profile[0-9]+$/.test(profile)) {
+    return cb(tableFailure('no file path from tvservice'));
+  }
+  fs.readdir(dir, function (err, names) {
+    var prefix = picMode + '_' + profile + '_';
+    var found = null;
+    for (var i = 0; !err && names && i < names.length; i++) {
+      if (names[i].indexOf(prefix) === 0 && endsWith(names[i], table.suffix)) { found = names[i]; break; }
+    }
+    if (!found) return cb(tableFailure('no file path from tvservice'));
+    fs.readFile(dir + '/' + found, function (e, data) {
+      if (e || data.length !== table.bytes) return cb(tableFailure('no file path from tvservice'));
+      cb({ returnValue: true, data: data.toString('base64'), dataCount: table.count, dataType: table.type, source: 'stored' });
+    });
+  });
+}
+
 function init(opts) {
   if (opts && opts.dir) dir = opts.dir;
 }
 
-module.exports = { init: init, readSlots: readSlots, classify: classify };
+module.exports = { init: init, readSlots: readSlots, readTable: readTable, classify: classify };
