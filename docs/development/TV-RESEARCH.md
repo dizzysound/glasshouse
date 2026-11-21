@@ -3754,3 +3754,20 @@ them (215622 bytes).
 
 Not yet confirmed on a TV: that the file prefix equals the mode name given when
 the calibration starts, and that a stored upload changes the file each time.
+
+### getExternalPqData from the stored files
+
+`POST /api/externalpq/getExternalPqData` takes the payload a modern LG's
+`externalpq/getExternalPqData` takes (`command`, plus `picMode` and `profileNo`
+to pick the slot) and answers with the same keys: `returnValue`, `data`
+(base64, little-endian 16-bit), `dataCount` (3072 for `GET_1D_DPG_DATA`, 107811
+for `GET_3D_LUT_DATA`) and `dataType`. Only those two commands are served.
+
+The bytes come from the slot file, so the reply is the stored state and carries
+`source: "stored"`. It is not the live T-CON value: a write sent with dataOpt 0
+stays in RAM and never reaches the file, and whether the file is rewritten on
+every stored upload has not been tested. Any other command, a missing slot or a
+wrongly sized file gets `returnValue: false` with the C1's own text,
+`no file path from tvservice`. The route needs the Glasshouse token, because
+the reply holds table data, and it is never logged.
+
