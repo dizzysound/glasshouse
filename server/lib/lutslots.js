@@ -3,8 +3,7 @@
  *
  * A 1D or 3D LUT, a 3x3 gamut matrix or an enable flag written to the picture
  * service is kept in /mnt/lg/cmn_data/external_pqldb/<mode>_<profileN>_<RECORD>.
- * readSlots reports each file's size and checksum, never its contents;
- * readTable returns one table's bytes on request. It is the
+ * readSlots reports each file's size and checksum, never its contents. It is the
  * stored state: a write sent with dataOpt 0 stays in RAM and is not in the
  * files, and the slot follows the picture mode a calibration session was
  * started in, not the mode on screen.
@@ -92,86 +91,15 @@ function readSlots(cb) {
     names.forEach(function (n) { live[dir + '/' + n] = true; });
     Object.keys(cache).forEach(function (p) { if (!live[p]) delete cache[p]; });
     var slots = [];
-    var pending = names.length;
-    if (!pending) return cb({ available: true, dir: dir, slots: slots });
-    names.forEach(function (name, index) {
-      describeFile(name, function (info) {
-        if (info) slots[index] = info;
-        if (--pending === 0) {
-          cb({ available: true, dir: dir, slots: slots.filter(Boolean) });
-        }
+    // One file at a time: the folder is about 10 MB, which should not be in
+    // memory at once on a TV with little of it.
+    (function next(i) {
+      if (i === names.length) return cb({ available: true, dir: dir, slots: slots });
+      describeFile(names[i], function (info) {
+        if (info) slots.push(info);
+        next(i + 1);
       });
-    });
-  });
-}
-
-// The one table read a modern LG answers from a file through
-// externalpq/getExternalPqData. GET_1D_DPG_DATA is not here: a modern TV
-// answers it with the gamma table the picture engine applies, which the stored
-// file is not (a dataOpt 0 write never reaches it), so it gets the failure reply.
-var TABLES = {
-  GET_3D_LUT_DATA: { suffix: '3D_LUT_DATA', bytes: 215622, count: 107811, type: 'unsigned integer16' }
-};
-var NO_FILE = 'no file path from tvservice';
-
-function tableFailure(text) {
-  return { returnValue: false, errorText: text };
-}
-
-/**
- * Answers getExternalPqData for one command from the stored slot file:
- * { returnValue, data (base64 little-endian uint16), dataCount, dataType,
- * source: 'stored' }. It is the file, never the live picture state, and a
- * write sent with dataOpt 0 is not in it. Unlike a modern TV it needs picMode
- * (and optionally profileNo and colorSpace) to name the slot; several matching
- * files without a colorSpace fail rather than guess, and file names the one
- * served. Anything else, or a missing or wrongly sized file, gets the failure
- * reply the C1 itself gives.
- */
-function readTable(command, picMode, profileNo, colorSpace, cb) {
-  var table = TABLES.hasOwnProperty(command) ? TABLES[command] : null;
-  if (!table) return cb(tableFailure(NO_FILE));
-  var profile = 'profile' + (profileNo === undefined || profileNo === null ? 0 : profileNo);
-  var space = colorSpace === undefined || colorSpace === null ? '' : String(colorSpace);
-  if (!/^[A-Za-z0-9_]+$/.test(String(picMode || '')) || !/^profile[0-9]+$/.test(profile) ||
-      !/^[A-Za-z0-9]*$/.test(space)) {
-    return cb(tableFailure(NO_FILE));
-  }
-  fs.readdir(dir, function (err, names) {
-    // The app names a slot by its picMode (hdrFilmMaker); the file prefix is
-    // either that name, full snake case (dolby_cinema_dark), or the HDR token
-    // plus the mode in camelCase (hdr_filmMaker), so all three are tried.
-    var name = String(picMode);
-    var snake = name.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
-    var tokenMatch = /^(hdr|dolby)([A-Z].*)$/.exec(name);
-    var spellings = [name, snake];
-    if (tokenMatch) {
-      spellings.push(tokenMatch[1] + '_' + tokenMatch[2].charAt(0).toLowerCase() + tokenMatch[2].slice(1));
-    }
-    var prefixes = [];
-    for (var k = 0; k < spellings.length; k++) {
-      var prefix = spellings[k] + '_' + profile + '_';
-      if (prefixes.indexOf(prefix) < 0) prefixes.push(prefix);
-    }
-    var found = [];
-    names = (!err && names) ? names.slice().sort() : [];
-    for (var i = 0; i < names.length; i++) {
-      if (!endsWith(names[i], table.suffix)) continue;
-      for (var j = 0; j < prefixes.length; j++) {
-        if (names[i].indexOf(prefixes[j]) !== 0) continue;
-        var middle = names[i].slice(prefixes[j].length, names[i].length - table.suffix.length);
-        // The middle is '' or a colour space such as BT709_.
-        if (space ? middle === space + '_' : true) found.push(names[i]);
-        break;
-      }
-    }
-    // Several variants (BT709 and BT2020) match: do not guess which cube the
-    // caller means.
-    if (found.length !== 1) return cb(tableFailure(NO_FILE));
-    fs.readFile(dir + '/' + found[0], function (e, data) {
-      if (e || data.length !== table.bytes) return cb(tableFailure(NO_FILE));
-      cb({ returnValue: true, data: data.toString('base64'), dataCount: table.count, dataType: table.type, source: 'stored', file: found[0] });
-    });
+    })(0);
   });
 }
 
@@ -179,4 +107,4 @@ function init(opts) {
   if (opts && opts.dir) dir = opts.dir;
 }
 
-module.exports = { init: init, readSlots: readSlots, readTable: readTable, classify: classify };
+module.exports = { init: init, readSlots: readSlots, classify: classify };

@@ -2612,17 +2612,6 @@ function handleRequest(req, res) {
     });
   }
 
-  // getExternalPqData as a modern LG answers it, from the stored slot files. The
-  // reply carries table bytes, so it is behind auth and is not logged.
-  if (pathname === '/api/externalpq/getExternalPqData' && req.method === 'POST') {
-    if (!authed(u.query, req)) return send(res, 401, JSON.stringify({ ok: false, error: 'unauthorized' }));
-    return readJsonBody(req, res, function (body) {
-      lutSlots.readTable(body && body.command, body && body.picMode, body && body.profileNo, body && body.colorSpace, function (r) {
-        send(res, 200, JSON.stringify(r));
-      });
-    });
-  }
-
   if (pathname === '/api/oledcare') {
     return telemetryModule.collectStats(function (st) {
       var oledData = (st && st.oled) || {};

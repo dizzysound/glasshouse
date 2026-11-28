@@ -217,8 +217,7 @@ before the file opens on Node 0.12, then remove the file.
 The OLED Care tab lists the picture calibration files in
 `/mnt/lg/cmn_data/external_pqldb` with their size and SHA-256. The files are
 opened for reading only. The list carries sizes and checksums, never contents.
-`POST /api/externalpq/getExternalPqData` is the one route that returns a
-table (the 3D LUT file, base64), behind the Glasshouse token and never logged. Nothing is shown, and `/api/lutslots` reports `available: false`,
+Nothing is shown, and `/api/lutslots` reports `available: false`,
 where the folder does not exist.
 
 ## Home-screen app port

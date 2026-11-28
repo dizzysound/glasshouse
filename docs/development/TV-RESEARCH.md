@@ -4261,38 +4261,3 @@ them (215622 bytes).
 Not yet confirmed on a TV: that a stored upload changes the file each time.
 The prefix is the mode name for SDR (`filmMaker`) and snake case for HDR
 (`hdr_cinema`, while the app sends `hdrCinema`).
-
-### getExternalPqData from the stored files
-
-Nothing in the dashboard, the TV app or this repo calls this route. It is for
-external calibration tools that read the 3D LUT back from the TV with
-`externalpq/getExternalPqData` to verify an upload (Colour Me Impressed's
-AutoCal does this and gets `no file path from tvservice` from a C1). Pointed at
-Glasshouse instead of the TV, such a tool gets the stored cube from the slot
-file. It has not been run against a real tool yet.
-
-`POST /api/externalpq/getExternalPqData` takes the payload a modern LG's
-`externalpq/getExternalPqData` takes (`command`) plus `picMode` and optional
-`profileNo` and `colorSpace` (`BT709` or `BT2020`) to pick the slot. A
-camelCase `picMode` also matches the file prefix in its other spellings:
-`hdrCinema` gives `hdr_cinema`, `hdrFilmMaker` gives `hdr_filmMaker` and
-`dolbyCinemaDark` gives `dolby_cinema_dark`. When several files match and no
-`colorSpace` is given, the reply is the failure reply; a good reply adds
-`file`, the file served. A modern TV needs only `command`, so the bare modern
-payload is not enough here: without `picMode` the reply is the failure
-reply. The reply has the same keys: `returnValue`, `data` (base64,
-little-endian 16-bit), `dataCount` (107811) and `dataType`
-(`unsigned integer16`, the string CMI writes; the read value is unverified),
-plus `source: "stored"`. Only `GET_3D_LUT_DATA` is served.
-
-The bytes come from the slot file, so the reply is the stored state. It is not
-the live value: a write sent with dataOpt 0 stays in RAM and never reaches the
-file, and whether the file is rewritten on every stored upload has not been
-tested. `GET_1D_DPG_DATA` is not served: a modern TV answers it with the gamma
-table the picture engine applies (engine state, not the file), so a stored
-table under that name would pass as live. Any other command, a missing slot,
-a bad `picMode` or `profileNo`, or a wrongly sized file gets `returnValue:
-false` with the C1's text, `no file path from tvservice`. Errors from the
-route itself (401, 400, 413, 415) use `{ok:false,error}`. The route needs the
-Glasshouse token, because the reply holds table data, and it is never logged.
-
