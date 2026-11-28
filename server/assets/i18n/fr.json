@@ -710,10 +710,6 @@
  "home.motion.crossfade": {"from": "Wallpaper cross-fade", "text": "Fondu enchaîné du fond d'écran"},
  "home.motion.crossfadeDesc": {"from": "The picture fades into the next when the part of the day changes, rather than switching at once.", "text": "L'image se fond dans la suivante quand le moment de la journée change, plutôt que de changer d'un coup."},
  "home.motion.drift": {"from": "Wallpaper drift", "text": "Dérive du fond d'écran"},
- "oled.slots": {"text": "Fichiers d'étalonnage enregistrés", "from": "Stored calibration files"},
- "oled.slots.note": {"text": "État enregistré, lu dans les fichiers du téléviseur. Une écriture d'étalonnage non enregistrée reste en mémoire et n'apparaît pas ici, et chaque fichier correspond au mode d'image dans lequel un étalonnage a été lancé, pas au mode affiché.", "from": "Stored state, read from the files on the TV. A calibration write that is not saved stays in memory and does not show here, and each file belongs to the picture mode a calibration was started in, not the mode on screen."},
- "oled.slots.size": {"text": "{n} octets", "from": "{n} bytes"},
- "oled.slots.badSize": {"text": "taille inattendue", "from": "unexpected size"},
  "home.motion.driftDesc": {"text": "Le fond d'écran se déplace latéralement très lentement, pour ne jamais rester immobile à l'écran.", "from": "The wallpaper shifts sideways very slowly, so it never sits still on the screen."},
  "home.motion.scroll": {"from": "Smooth scrolling", "text": "Défilement fluide"},
  "home.motion.scrollDesc": {"from": "A row glides to the chosen tile, rather than jumping to it.", "text": "Une rangée glisse jusqu'à la case choisie, plutôt que d'y sauter directement."},
@@ -3221,6 +3217,8 @@
  "ha.token.set": {"text": "Un jeton est configuré. Laissez vide pour le conserver.", "from": "A token is set. Leave blank to keep it."},
  "ha.url": {"text": "Adresse de Home Assistant", "from": "Home Assistant address"},
  "ha.url.hint": {"text": "Adresse et port de votre instance Home Assistant.", "from": "Address and port of your Home Assistant instance."},
+ "ha.updateMode.wsPushing": {"text": "envoie les changements", "from": "pushing changes"},
+ "ha.updateMode.wsReconnecting": {"text": "reconnexion…", "from": "reconnecting…"},
  "srv.saver.badEntities": {"text": "{file} : entities nécessite des noms courts, chacun avec un identifiant d'entité Home Assistant tel que sensor.outdoor_temperature, jusqu'à {max} au maximum.", "from": "{file}: entities needs short names, each with a Home Assistant entity id such as sensor.outdoor_temperature, up to {max} of them."},
  "srv.saver.haUses": {"text": "{file} : entities et \"ha\" ou \"ha-all\" dans uses vont ensemble.", "from": "{file}: entities and \"ha\" or \"ha-all\" in uses go together."},
  "srv.saver.undeclaredHa": {"text": "{main} utilise {placeholder}, et saver.json ne mentionne pas cette entité sous entities.", "from": "{main} uses {placeholder}, and saver.json does not name that entity under entities."},
@@ -4011,5 +4009,12 @@
  "audio.bar.tone": {"from": "Tone controls", "text": "Réglages de tonalité"},
  "audio.bar.device": {"from": "Device settings", "text": "Réglages de l’appareil"},
  "audio.bar.volume": {"from": "Soundbar volume", "text": "Volume de la barre de son"},
- "audio.bar.tvVolume": {"from": "TV-reported volume: {value}", "text": "Volume indiqué par le téléviseur: {value}"}
+ "audio.bar.tvVolume": {"from": "TV-reported volume: {value}", "text": "Volume indiqué par le téléviseur: {value}"},
+ "inputs.banner": {"from": "Input banner", "text": "Bandeau d’entrée"},
+ "inputs.banner.close": {"from": "Close the input banner at once", "text": "Fermer tout de suite le bandeau d’entrée"},
+ "inputs.banner.closeDesc": {"from": "Switching to an HDMI input shows LG’s banner with its name for 5 seconds, and until it goes the remote does not reach the device. With this on, Glasshouse closes it 2 seconds in, so the remote works on the device straight away. Only for inputs with a device that the TV controls over HDMI-CEC (SIMPLINK).", "text": "En passant sur une entrée HDMI, LG affiche un bandeau avec son nom pendant 5 secondes, et tant qu’il est là la télécommande n’atteint pas l’appareil. Activé, Glasshouse le ferme au bout de 2 secondes, et la télécommande pilote l’appareil aussitôt. Seulement pour les entrées avec un appareil que la TV pilote en HDMI-CEC (SIMPLINK)."},
+ "oled.slots": {"text": "Fichiers d'étalonnage enregistrés", "from": "Stored calibration files"},
+ "oled.slots.note": {"text": "État enregistré, lu dans les fichiers du téléviseur. Une écriture d'étalonnage non enregistrée reste en mémoire et n'apparaît pas ici, et chaque fichier correspond au mode d'image dans lequel un étalonnage a été lancé, pas au mode affiché.", "from": "Stored state, read from the files on the TV. A calibration write that is not saved stays in memory and does not show here, and each file belongs to the picture mode a calibration was started in, not the mode on screen."},
+ "oled.slots.size": {"text": "{n} octets", "from": "{n} bytes"},
+ "oled.slots.badSize": {"text": "taille inattendue", "from": "unexpected size"}
 }

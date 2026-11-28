@@ -1443,8 +1443,18 @@ html[lang="vi"] #srcTitle,html[lang="vi"] #plMode,html[lang="vi"] #pvMode,html[l
   // Input tile icons, shared with the input bar (devicons.js).
   var devIcon = window.glasshouseDevIcon;
 
+  // The server names the All Inputs and Screen Share tiles in English; they
+  // are the names here that are not the TV's own or the user's. One the owner
+  // renamed on the Inputs tab carries defaultName, and keeps its name.
+  function itemName(it) {
+    if (it.defaultName) return it.title || it.name;
+    return it.kind === 'allinputs' ? t('inputs.kind.allinputs', 'All inputs')
+      : it.kind === 'screenshare' ? t('inputs.kind.screenshare', 'Screen Share') : (it.title || it.name);
+  }
+
   function devTileHtml(d, i, cls, path, status, cec) {
-    return '<div class="' + cls + '" data-c="' + i + '"><div class="dhead">' + devIcon(d) + '<div class="dtx"><div class="nm">' + esc(d.name) + '</div>' +
+    var name = itemName(d);
+    return '<div class="' + cls + '" data-c="' + i + '"><div class="dhead">' + devIcon(d) + '<div class="dtx"><div class="nm">' + esc(name) + '</div>' +
       '<div class="path">' + esc(path) + '</div></div></div>' +
       '<div class="st"><em>' + esc(status) + '</em><span>' + (cec ? esc(cec) : '') + '</span></div>' +
       hiddenLabel + '</div>';
@@ -1472,7 +1482,7 @@ html[lang="vi"] #srcTitle,html[lang="vi"] #plMode,html[lang="vi"] #pvMode,html[l
       var path = d.unused ? ''
         : d.kind === 'av' ? t('inputs.kind.av', 'AV')
         : d.kind === 'component' ? t('inputs.kind.component', 'Component')
-        : d.kind === 'dms' ? (d.address || 'Media Server')
+        : d.kind === 'dms' ? (d.address || t('inputs.kind.dms', 'Media server'))
         : d.kind === 'usb' ? 'USB'
         : isExtra ? ''
         : d.via ? t('home.dev.through', 'HDMI {port}, through {via}', { port: d.port, via: d.via })
@@ -1534,6 +1544,11 @@ html[lang="vi"] #srcTitle,html[lang="vi"] #plMode,html[lang="vi"] #pvMode,html[l
 
   var haTiles = [], haShowHints = true, haTimer = null, haLoading = false, haBusy = {}, haFlash = {};
   var HA_POLL_MS = 10000;
+  // The server says how often to ask: every second where it answers from a
+  // cache kept by Home Assistant's push or its own background refresh, at
+  // no cost to Home Assistant. Never more often than this.
+  var HA_POLL_MIN_MS = 1000;
+  var haPollMs = HA_POLL_MS;
   function haRowActive() { return !!(data && layout && layout.haRow === true && data.haBarAvailable === true); }
   function haIsOneShot(domain) {
     return domain === 'scene' || domain === 'script' || domain === 'button' || domain === 'input_button';
@@ -1634,6 +1649,11 @@ html[lang="vi"] #srcTitle,html[lang="vi"] #plMode,html[lang="vi"] #pvMode,html[l
     getJson('/api/ha/bar/state', function (r) {
       haLoading = false;
       if (!r || !r.ok || !Array.isArray(r.tiles)) return;
+      var nextPoll = r.cached === true ? HA_POLL_MIN_MS : HA_POLL_MS;
+      if (nextPoll !== haPollMs) {
+        haPollMs = nextPoll;
+        if (haTimer) { clearInterval(haTimer); haTimer = setInterval(loadHaRow, haPollMs); }
+      }
       var nextHints = r.showHints !== false;
       var hintsChanged = nextHints !== haShowHints;
       haShowHints = nextHints;
@@ -1653,7 +1673,7 @@ html[lang="vi"] #srcTitle,html[lang="vi"] #plMode,html[lang="vi"] #pvMode,html[l
       return;
     }
     if (refreshNow || !haTiles.length) loadHaRow();
-    haTimer = setInterval(loadHaRow, HA_POLL_MS);
+    haTimer = setInterval(loadHaRow, haPollMs);
   }
   /*
    * Whether a tile that steps is in focus, told to the server, so Channel up
@@ -1708,7 +1728,9 @@ html[lang="vi"] #srcTitle,html[lang="vi"] #plMode,html[lang="vi"] #pvMode,html[l
     if (!item || !item.id || haBusy[item.id]) return;
     haBusy[item.id] = true;
     updateHaTilesInPlace();
-    postJson('/api/ha/bar/act', { id: item.id, action: action, value: value }, function (r) {
+    // The state shown before acting, so the server waits for Home Assistant
+    // to report it changed rather than answering with the old one.
+    postJson('/api/ha/bar/act', { id: item.id, action: action, value: value, prevState: item.state }, function (r) {
       delete haBusy[item.id];
       if (!r || !r.ok) {
         toast(item.label || item.id, (r && r.error) || t('home.ha.failed', 'Action failed'));
@@ -1778,10 +1800,10 @@ html[lang="vi"] #srcTitle,html[lang="vi"] #plMode,html[lang="vi"] #pvMode,html[l
           ? t('home.arrange.sortFocus', '{row}: OK changes the order', { row: ROW_TITLES[rowKey()] })
         : !it ? t('home.arrange.emptyRow', 'This row is empty')
         : it.add ? t('home.tv.addArrange', 'Add channels: OK opens the list')
-        : state.held ? t('home.arrange.moving', 'Moving {name}', { name: it.title || it.name })
-        : hidden(rowKey(), it.id) ? (it.title || it.name) + ' ' + t('home.arrange.isHidden', '(hidden)')
+        : state.held ? t('home.arrange.moving', 'Moving {name}', { name: itemName(it) })
+        : hidden(rowKey(), it.id) ? itemName(it) + ' ' + t('home.arrange.isHidden', '(hidden)')
         : inFolder(rowKey(), it.id) ? t('home.arrange.isInFolder', '{name} (in More apps)', { name: it.title })
-        : (it.title || it.name);
+        : itemName(it);
     }
     followPreview();
   }
@@ -2260,7 +2282,7 @@ html[lang="vi"] #srcTitle,html[lang="vi"] #plMode,html[lang="vi"] #pvMode,html[l
       sig.push(t('home.plate.noSignal', 'No picture coming in'));
     }
     $('plSig').innerHTML = spans(sig);
-    $('plMode').textContent = p.mode ? p.mode.display : '';
+    $('plMode').textContent = p.mode ? (p.mode.name || p.mode.display) : '';
     $('plStrip').innerHTML = lightHtml(p);
     $('plate').className = '';
   }
@@ -3283,7 +3305,7 @@ html[lang="vi"] #srcTitle,html[lang="vi"] #plMode,html[lang="vi"] #pvMode,html[l
     var p = tilePreview.info;
     if (!layout || layout.picture !== true || !p) return setPreviewState('on');
     var sig = p.signal ? signalParts(p.signal) : [];
-    $('pvMode').textContent = p.mode ? p.mode.display : '';
+    $('pvMode').textContent = p.mode ? (p.mode.name || p.mode.display) : '';
     $('pvLight').innerHTML = lightHtml(p);
     $('pvSig').innerHTML = spans(sig);
     setPreviewState('on' + (p.mode || sig.length ? ' info' : ''));

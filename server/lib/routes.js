@@ -118,6 +118,8 @@ var haEntityModule = null;
 var haBarModule = null;
 /** @type {typeof import('./inputbar')} */
 var inputBarModule = null;
+/** @type {typeof import('./inputbanner')} */
+var inputBannerModule = null;
 /** @type {typeof import('./ask')} */
 var askModule = null;
 /** @type {typeof import('./updater')} */
@@ -141,6 +143,9 @@ var ntpModule = null;
 /** @type {typeof import('./history')} */
 var historyModule = null;
 var perfHistoryModule = null;
+var barPressModule = null;
+// The palmbus switch's state and report links (palmbusInfo in tvweb.js).
+var palmbusInfoFn = null;
 var storageScanModule = null;
 /** @type {typeof import('./sysinfo')} */
 var sysinfoModule = null;
@@ -192,9 +197,12 @@ var SETUP_PENDING = '/var/lib/tvweb/.setup-pending';
 var HANDOFF = { server: null, code: null, timer: null };
 var HANDOFF_MS = 10 * 60 * 1000;
 
+// The page as sent: gzipped where node can, with the text kept only where it cannot.
 var UI_HTML = null;
 var UI_HTML_GZ = null;
 var UI_ETAG = null;
+// Where the gzipped page is kept between starts (loadUI), or null for none.
+var uiCacheDir = null;
 var UI_MISSING = 'ui.html';   // the file named by the missing-assets page
 var ASSET_CACHE = {};
 
@@ -707,7 +715,7 @@ function handoffRequest(req, res) {
 
 function startHandoff(cb) {
   if (HANDOFF.server) return cb(null, handoffUrl());
-  if (!localAddress4()) return cb(new Error('this TV has no network address'));
+  if (!localAddress4()) return cb(new Error(msg('srv.setup.noAddress', 'this TV has no network address')));
   var code = crypto.randomBytes(8).toString('hex');
   var srv = http.createServer(handoffRequest);
   // IPv4-only if the dashboard is; dual-stack otherwise, even when the
@@ -798,9 +806,10 @@ function preloadWithIcons(cb) {
  * its scripts left as files, which a browser keeps from before an update, so
  * the dashboard showed new controls driven by old script.
  */
-function inlineUI(html) {
+function inlineUI(html, used) {
   var missing = null;
   function part(rel) {
+    if (used) used.push(rel);
     var f = assetPath(rel);
     if (f) {
       try { return fs.readFileSync(f, 'utf8'); } catch (e) {}
@@ -819,6 +828,60 @@ function inlineUI(html) {
   return html;
 }
 
+/*
+ * The page put together is 1.35 million characters, kept by V8 at two bytes
+ * each, and gzipping it took 0.4 s on a B8 (node 0.12) at every start, with
+ * 3.7 MB more held for good: node 0.12 keeps its heap at its peak. So the
+ * gzipped page is kept on disk, made once for each set of files it is made
+ * from, and a start that finds it reads 340 KB and makes nothing.
+ *
+ * The files are told apart by their bytes, read as buffers and never as text,
+ * with where each was found, the version and how they are put together.
+ */
+var UI_CACHE_GZ = 'ui-page.gz';
+var UI_CACHE_META = 'ui-page.json';
+
+function uiSources(parts) {
+  var hash = crypto.createHash('sha1');
+  hash.update(versionStr + '\n' + inlineUI.toString() + '\n');
+  var files = ['ui.html'].concat(parts);
+  for (var i = 0; i < files.length; i++) {
+    var f = assetPath(files[i]);
+    if (!f) return null;
+    try { hash.update(f + '\n'); hash.update(fs.readFileSync(f)); } catch (e) { return null; }
+  }
+  return hash.digest('hex');
+}
+
+function readUiCache() {
+  if (!uiCacheDir || typeof zlib.gzipSync !== 'function') return null;
+  var meta = readJsonSafe(path.join(uiCacheDir, UI_CACHE_META));
+  if (!meta || typeof meta.sources !== 'string' || typeof meta.etag !== 'string' || !Array.isArray(meta.parts)) return null;
+  if (uiSources(meta.parts) !== meta.sources) return null;
+  try { return { gz: fs.readFileSync(path.join(uiCacheDir, UI_CACHE_GZ)), etag: meta.etag }; } catch (e) { return null; }
+}
+
+function writeUiCache(gz, etag, parts) {
+  if (!uiCacheDir) return;
+  var sources = uiSources(parts);
+  if (!sources) return;
+  var gzFile = path.join(uiCacheDir, UI_CACHE_GZ), metaFile = path.join(uiCacheDir, UI_CACHE_META);
+  try {
+    // The page first, then what it was made from: a start between the two finds no match.
+    try { fs.unlinkSync(metaFile); } catch (e) {}
+    fs.writeFileSync(gzFile + '.tmp', gz);
+    fs.renameSync(gzFile + '.tmp', gzFile);
+    fs.writeFileSync(metaFile + '.tmp', JSON.stringify({ sources: sources, etag: etag, parts: parts }));
+    fs.renameSync(metaFile + '.tmp', metaFile);
+  } catch (e) {
+    console.error('assets: could not keep the gzipped page: ' + e.message);
+  }
+}
+
+function readJsonSafe(f) {
+  try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) { return null; }
+}
+
 // Called only where something will serve it: not with the web dashboard off,
 // nor for a one-shot run such as --update.
 function loadUI() {
@@ -828,14 +891,24 @@ function loadUI() {
                   ' - the dashboard will report it is missing');
     return;
   }
+  var kept = readUiCache();
+  if (kept) {
+    UI_HTML = null;
+    UI_HTML_GZ = kept.gz;
+    UI_ETAG = kept.etag;
+    console.log('assets: serving ui.html from ' + f + ' (' + Math.round(UI_HTML_GZ.length / 1024) + ' KB compressed, kept from an earlier start)');
+    return;
+  }
   try {
-    var page = inlineUI(fs.readFileSync(f, 'utf8'));
+    var parts = [];
+    var page = inlineUI(fs.readFileSync(f, 'utf8'), parts);
     if (!page) {
       console.error('assets: ' + UI_MISSING + ' not found in ' + assetDirsList.join(', ') +
                     ' - the dashboard will report it is missing');
       return;
     }
     UI_HTML = page;
+    UI_HTML_GZ = null;
     // From the content, not the version: a deploy of uncommitted changes keeps
     // the version, and browsers would go on showing the page before them.
     UI_ETAG = '"' + crypto.createHash('sha1').update(page, 'utf8').digest('hex').slice(0, 16) + '"';
@@ -848,6 +921,9 @@ function loadUI() {
      */
     try {
       UI_HTML_GZ = zlib.gzipSync(UI_HTML);
+      // Sent gzipped from here on, and unzipped for the rare client that will not take it.
+      UI_HTML = null;
+      writeUiCache(UI_HTML_GZ, UI_ETAG, parts);
       console.log('assets: serving ui.html from ' + f + ' (' + Math.round(UI_HTML_GZ.length / 1024) + ' KB compressed)');
     } catch (ze) {
       console.log('assets: serving ui.html from ' + f);
@@ -867,6 +943,7 @@ function updateSummary() {
   s.allowNetworkDebugger = !!(config && config.allowNetworkDebugger);
   s.allowTileHiding = !!(appsModule && appsModule.tileHidingAllowed && appsModule.tileHidingAllowed());
   s.allowExperimentalScreensavers = !!(screensaversModule && screensaversModule.allowedAnyway && screensaversModule.allowedAnyway());
+  s.palmbus = palmbusInfoFn ? palmbusInfoFn() : null;
   s.pointer = {
     supported: !!(pointerModule && pointerModule.isSupported()),
     enabled: !!(pointerModule && pointerModule.isEnabled()),
@@ -1554,9 +1631,20 @@ function handleHomeRoute(req, res, u, pathname) {
     return readJsonBody(req, res, function (body) {
       if (pathname === '/api/home/layout') return homeModule.setLayout(body, reply);
       if (pathname === '/api/home/start-layout') return homeModule.setHideLgHomeAtStart(body, reply);
-      // Glasshouse Bar leaves LG's Home its place, so it is switched off first.
+      // Glasshouse Bar leaves LG's Home its place, so it is switched off. On
+      // takeover TVs, enable Glasshouse Home first so the Home key is not
+      // briefly handed back to LG's Home before takeover mounts it.
       if (pathname === '/api/home/enable') {
         if (!homebarModule || !homebarModule.enabled()) return homeModule.enable(reply);
+        if (typeof homeModule.isStandalone === 'function' && !homeModule.isStandalone()) {
+          return homeModule.enable(function (r) {
+            if (!r.ok) return reply(r);
+            homebarModule.disable(function (br) {
+              if (!br.ok) return homeModule.disable(function () { reply(br); });
+              reply(r);
+            });
+          });
+        }
         return homebarModule.disable(function (r) { if (!r.ok) return reply(r); homeModule.enable(reply); });
       }
       if (pathname === '/api/home/bar' && homebarModule) {
@@ -1728,13 +1816,27 @@ function acceptsGzip(acceptEncoding) {
   return wildcardAccepted;
 }
 
+/*
+ * The Home Assistant bar (assets/habar.html, bar=1) loads no translation file,
+ * so its answers come in the TV's menu language, as i18n.js would have picked
+ * from the TV's browser. Glasshouse Home asks the same routes in its own
+ * language. Returns the TV's locale for the bar, or null for anything else.
+ */
+function barAsks(u, res) {
+  if (!u.query || u.query.bar !== '1') return null;
+  var locale = clockModule && clockModule.qtLocale ? String(clockModule.qtLocale() || '') : '';
+  var r = /** @type {any} */ (res);
+  if (!r.glasshouseLang) r.glasshouseLang = say.langOfLocale(locale);
+  return locale;
+}
+
 function handleRequest(req, res) {
   var u = parseUrl(req.url);
   var pathname = u.pathname;
   /** @type {any} */ (res).glasshouseLang = say.langOf(req);
 
   if (pathname === '/' || pathname === '/index.html') {
-    if (UI_HTML) {
+    if (UI_HTML || UI_HTML_GZ) {
       var gzip = !!UI_HTML_GZ && acceptsGzip(req.headers && req.headers['accept-encoding']);
       // no-cache, not no-store: the browser keeps the page and asks each
       // time, and an unchanged one comes back as a 304 with no body.
@@ -1747,9 +1849,9 @@ function handleRequest(req, res) {
         res.writeHead(304, uiHeaders);
         return res.end();
       }
-      var uiBody = gzip ? UI_HTML_GZ : UI_HTML;
+      var uiBody = gzip ? UI_HTML_GZ : (UI_HTML !== null ? UI_HTML : zlib.gunzipSync(UI_HTML_GZ));
       uiHeaders['Content-Type'] = 'text/html; charset=utf-8';
-      uiHeaders['Content-Length'] = gzip ? UI_HTML_GZ.length : Buffer.byteLength(UI_HTML);
+      uiHeaders['Content-Length'] = typeof uiBody === 'string' ? Buffer.byteLength(uiBody) : uiBody.length;
       if (gzip) uiHeaders['Content-Encoding'] = 'gzip';
       uiHeaders['X-Content-Type-Options'] = 'nosniff';
       uiHeaders['Referrer-Policy'] = 'no-referrer';
@@ -1974,7 +2076,8 @@ function handleRequest(req, res) {
       ok: true,
       writable: !!config.allowControl,
       noSignal: nosignal.status(),
-      inputBar: inputBarModule ? inputBarModule.summary() : null
+      inputBar: inputBarModule ? inputBarModule.summary() : null,
+      inputBanner: inputBannerModule ? inputBannerModule.summary() : null
     }));
   }
 
@@ -2302,7 +2405,9 @@ function handleRequest(req, res) {
 
   if (pathname === '/api/ha/bar/state' && req.method === 'GET' && haBarModule) {
     if (!fromTV(req) && !authed(u.query, req)) return send(res, 401, JSON.stringify({ ok: false, error: 'unauthorized' }));
+    var barLocale = barAsks(u, res);
     return haBarModule.state(function (r) {
+      if (r && barLocale !== null) r.text = haBarModule.barText(barLocale);
       send(res, 200, JSON.stringify(r || { ok: false, error: 'failed' }));
     });
   }
@@ -2319,6 +2424,33 @@ function handleRequest(req, res) {
         body && typeof body.id === 'string' ? body.id : '');
     });
   }
+  // A press the key filter launched a bar for, and a bar's page taking one (lib/barpress). The TV only.
+  if (pathname === '/api/bar/press' && req.method === 'POST' && barPressModule) {
+    if (!fromTV(req)) return send(res, 403, JSON.stringify({ ok: false, error: 'from the TV only' }));
+    return readJsonBody(req, res, function (body) {
+      var ok = barPressModule.pressed(body && body.app, body && body.press);
+      send(res, ok ? 200 : 400, JSON.stringify({ ok: ok }));
+    });
+  }
+  if (pathname === '/api/bar/seen' && req.method === 'GET' && barPressModule) {
+    if (!fromTV(req)) return send(res, 403, JSON.stringify({ ok: false, error: 'from the TV only' }));
+    barPressModule.seen(String(u.query.app || ''), Number(u.query.press));
+    return send(res, 200, JSON.stringify({ ok: true }));
+  }
+  if (pathname === '/api/bar/closed' && req.method === 'GET' && barPressModule) {
+    if (!fromTV(req)) return send(res, 403, JSON.stringify({ ok: false, error: 'from the TV only' }));
+    barPressModule.closed(String(u.query.app || ''), Number(u.query.press));
+    return send(res, 200, JSON.stringify({ ok: true }));
+  }
+  // The key filter's Brightness keys: a step made here, as the compositor's own call cannot read the level on webOS 4 (#1815). The TV only.
+  if (pathname === '/api/remotekeys/brightness' && req.method === 'POST' && remoteKeysModule) {
+    if (!fromTV(req)) return send(res, 403, JSON.stringify({ ok: false, error: 'from the TV only' }));
+    return readJsonBody(req, res, function (body) {
+      remoteKeysModule.brightnessFromFilter(body && body.delta, body && body.from, function (r) {
+        send(res, r && r.ok ? 200 : 502, JSON.stringify(r || { ok: false }));
+      });
+    });
+  }
   // The key filter's Ambient light key: PicCap toggled here, as the dashboard does. The TV only.
   if (pathname === '/api/remotekeys/piccap' && req.method === 'POST' && remoteKeysModule) {
     if (!fromTV(req)) return send(res, 403, JSON.stringify({ ok: false, error: 'from the TV only' }));
@@ -2329,8 +2461,9 @@ function handleRequest(req, res) {
     if (!fromTV(req) && !config.allowControl) {
       return send(res, 403, JSON.stringify({ ok: false, error: msg('srv.controlsOff', 'controls disabled in config') }));
     }
+    barAsks(u, res);
     return readJsonBody(req, res, function (body) {
-      haBarModule.act(body && body.id, body && body.action, body && body.value, function (r) {
+      haBarModule.act(body && body.id, body && body.action, body && body.value, body && body.prevState, function (r) {
         send(res, r && r.ok ? 200 : 502, JSON.stringify(r || { ok: false, error: 'failed' }));
       });
     });
@@ -3248,6 +3381,7 @@ function init(opts) {
   if (opts.haEntity) haEntityModule = opts.haEntity;
   if (opts.haBar) haBarModule = opts.haBar;
   if (opts.inputBar) inputBarModule = opts.inputBar;
+  if (opts.inputBanner) inputBannerModule = opts.inputBanner;
   if (opts.ask) askModule = opts.ask;
   if (opts.updater) updaterModule = opts.updater;
   if (opts.logs) logsModule = opts.logs;
@@ -3264,6 +3398,8 @@ function init(opts) {
   if (opts.ntp) ntpModule = opts.ntp;
   if (opts.history) historyModule = opts.history;
   if (opts.perfHistory) perfHistoryModule = opts.perfHistory;
+  if (opts.barPress) barPressModule = opts.barPress;
+  if (typeof opts.palmbus === 'function') palmbusInfoFn = opts.palmbus;
   if (opts.storageScan) storageScanModule = opts.storageScan;
   if (opts.sysinfo) sysinfoModule = opts.sysinfo;
   if (opts.screenColour) screenColourModule = opts.screenColour;
@@ -3275,6 +3411,7 @@ function init(opts) {
   if (opts.tileHidingOff) tileHidingOffMsg = opts.tileHidingOff;
   if (opts.assetPath) assetPathFn = opts.assetPath;
   if (opts.assetDirs) assetDirsList = opts.assetDirs;
+  if (opts.stateDir) uiCacheDir = opts.stateDir;
   if (opts.luna) lunaFn = opts.luna;
   if (opts.getMqttStatus) getMqttStatusFn = opts.getMqttStatus;
   if (opts.appsChanged) appsChangedFn = opts.appsChanged;

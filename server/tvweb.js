@@ -19,7 +19,7 @@
  * first 4096 bytes of a downloaded tvweb.js for this line (up to 0.82.2), and
  * refuses a release where it is further down (#586).
  */
-var TVWEB_VERSION = '0.161.0';
+var TVWEB_VERSION = '0.162.0';
 
 var http = require('http');
 var fs = require('fs');
@@ -68,6 +68,7 @@ var remoteKeys = require('./lib/remotekeys');
 var inputBar = require('./lib/inputbar');
 var askQuestion = require('./lib/ask');
 var updateAsk = require('./lib/updateask');
+var inputBanner = require('./lib/inputbanner');
 var compat = require('./lib/compat');
 
 /*
@@ -84,6 +85,7 @@ function compatTv() {
   };
 }
 var homebar = require('./lib/homebar');
+var barPress = require('./lib/barpress');
 var haBar = require('./lib/habar');
 var clockFormat = require('./lib/clock');
 var homeScreen = require('./lib/homescreen');
@@ -251,6 +253,10 @@ var CONFIG = {
   // untried (#366, #768). Set here or from the Server tab. It was named
   // allowOnWebos10 until 0.105, and migrateConfigFile() renames that.
   allowExperimentalScreensavers: false,
+  // One-shot luna calls through LG's palmbus binding rather than a luna-send
+  // process each (lib/palmbus.js): true or false, or null for the default,
+  // on where lib/compat lists the TV's webOS version as tried.
+  lunaViaPalmbus: null,
   pointer: { enabled: true, transport: 'websocket', updatesPerSecond: 120 },
 
   // Hiding built-in system tiles is experimental: restarting the app manager
@@ -544,6 +550,18 @@ loadConfig();
 // At the debug level each luna call is logged as it starts and ends, flushed
 // to disk, for a TV that restarts itself (#746).
 lunaTransport.setDebug(getActiveLogLevel() === 'debug');
+// What the Server tab shows of it, with the links to report how it went where it is untried.
+function palmbusInfo() {
+  var st = lunaTransport.palmbusStatus();
+  var tv = compatTv();
+  tv.extra = 'Through luna-send instead: ' + (st.lunaSend.length ? st.lunaSend.map(function (e) { return e.method + ' (' + e.why + ')'; }).join('; ') : 'none') +
+             (st.off ? '\nSwitched off: ' + st.off : '');
+  var c = compat.info('palmbus', tv);
+  st.standing = c.standing;
+  st.webos = c.webos;
+  if (c.report) st.report = c.report;
+  return st;
+}
 
 /*
  * One-shot modes, behind `tvwebctl update` and `tvwebctl rollback`. They run
@@ -566,6 +584,27 @@ var CLI_FORCE = false;
 
 updater.init({ config: CONFIG, version: TVWEB_VERSION, displayVersion: TVWEB_DISPLAY_VERSION, installDir: __dirname });
 
+/*
+ * Not for a one-shot run such as --update, which exits 3 when there is nothing
+ * newer and would be taken for a server that stopped without exiting.
+ */
+if (!CLI_MODE) {
+  var palmbusBoot = '';
+  try { palmbusBoot = fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim(); } catch (e) {}
+  var palmbusOn = lunaTransport.configurePalmbus({
+    setting: typeof CONFIG.lunaViaPalmbus === 'boolean' ? CONFIG.lunaViaPalmbus : null,
+    tried: compat.standing('palmbus', telemetry.detectWebosVersion()) === 'tried',
+    stateDir: __dirname,
+    version: TVWEB_DISPLAY_VERSION,
+    boot: palmbusBoot
+  });
+  if (palmbusOn) {
+    console.log('luna: one-shot calls through palmbus (' +
+                (typeof CONFIG.lunaViaPalmbus === 'boolean' ? 'switched on' : 'on by default on this webOS version') + ')');
+  }
+}
+
+
 // ---------------------------------------------------------------- helpers
 var TOAST_SOURCE = 'com.webos.app.home';
 var BROWSER_APP = 'com.webos.app.browser';
@@ -577,7 +616,37 @@ var BROWSER_APP = 'com.webos.app.browser';
  */
 var lunaCacheObj = lunaTransport.createCache(luna);
 
-function lunaCached(uri, payload, ttlMs, cb) { lunaCacheObj.get(uri, payload, ttlMs, cb); }
+function lunaCached(uri, payload, ttlMs, cb) { lunaCacheObj.get(uri, payload, liveTtl(uri, payload, ttlMs), cb); }
+
+/*
+ * Reads a live subscription reports in full, by cache key. While each named
+ * subscription is up, a change it reports clears the read (LIVE_STALE), so
+ * the read is kept a minute rather than asked again every few seconds. With
+ * MQTT on, telemetry asked these every 10 s: most of the 80 to 100 luna-send
+ * processes a minute an idle TV started (a B8 and a C2). The minute bounds
+ * what an event the TV never sends costs.
+ */
+var LIVE_KEPT_MS = 60000;
+var LIVE_COVERS = [
+  { key: 'com.webos.service.tvpower/power/getPowerState|{}', groups: ['power'] },
+  { key: 'com.webos.applicationManager/getForegroundAppInfo|{}', groups: ['application'] },
+  { key: 'com.webos.service.settings/getSystemSettings|{"category":"picture","keys":["backlight","pictureMode","energySaving","screenShift","logoLuminanceAdjust"]}', groups: ['picture'] },
+  // The modes on offer follow the source and its dynamic range, which moves
+  // the picture mode the picture subscription reports.
+  { key: 'com.webos.service.settings/getSystemSettingValues|{"category":"picture","key":"pictureMode"}', groups: ['picture', 'application'] },
+  { key: 'com.webos.audio/getSoundOut|{}', groups: ['audio'] },
+  { key: 'com.webos.service.audio/master/getVolume|{}', groups: ['audio'] }
+];
+
+function liveTtl(uri, payload, ttlMs) {
+  if (ttlMs >= LIVE_KEPT_MS || typeof liveState === 'undefined') return ttlMs;
+  var key = uri + '|' + JSON.stringify(payload || {});
+  for (var i = 0; i < LIVE_COVERS.length; i++) {
+    if (LIVE_COVERS[i].key !== key) continue;
+    return LIVE_COVERS[i].groups.every(liveState.isLive) ? LIVE_KEPT_MS : ttlMs;
+  }
+  return ttlMs;
+}
 
 function clearLunaCache(match) { lunaCacheObj.forget(match); }
 
@@ -588,6 +657,7 @@ function clearLunaCache(match) { lunaCacheObj.forget(match); }
  * and the source's frame rate, whose pipeline id can come back the same.
  */
 var LIVE_STALE = {
+  power: ['com.webos.service.tvpower/power/getPowerState'],
   audio: ['com.webos.audio/', 'com.webos.service.audio/', '"category":"sound"'],
   application: ['getForegroundAppInfo', '"category":"picture"', 'getVRRInfo'],
   picture: ['"category":"picture"']
@@ -599,7 +669,7 @@ btAudio.init({ luna: luna, clearLunaCache: clearLunaCache });
 game.init({ lunaCached: lunaCached, inputKey: telemetry.inputKey });
 appHosts.init({});
 privacy.init({ luna: luna, lunaCached: lunaCached, config: CONFIG, lgSettings: lgSettings, services: servicesModule, appHosts: CLI_MODE ? null : appHosts });
-oled.init({ luna: luna, config: CONFIG });
+oled.init({ luna: luna, lunaFirst: lunaTransport.callFirst, config: CONFIG });
 screenColour.init({ luna: luna });
 samrescan.init({ luna: luna });
 appsModule.init({ luna: luna, config: CONFIG });
@@ -675,6 +745,10 @@ remoteKeys.init({ detectRemotes: detectRemotes, luna: luna, subscription: lunaTr
   onHomeBarKey: function () { homebar.keySet(); },
   haBarAllowed: function () { return haBar.available(); },
   haBarApp: function (action, cb) { tvApp(action, cb, 'habar-app'); },
+  haBarKept: function () {
+    return quickAccess.opensHaBar() ||
+      !!(glasshouseHome && glasshouseHome.haBarInHomeBar() && (homebar.enabled() || remoteKeys.opensHomeBar()));
+  },
   onHaBarKey: function () { haBar.keySet(); },
   // A channel key set to Brightness, on webOS 11, while Glasshouse Home has a Home Assistant tile that steps in focus.
   homeAdjustStep: function (id, dir, cb) {
@@ -717,6 +791,7 @@ homebar.init({
   on: function () { return !liveState || (liveState.state.snapshot().power || {}).systemOn !== false; },
   byKey: remoteKeys.opensHomeBar,
   homeInFront: function () { return !!(glasshouseHome && glasshouseHome.viewInFront()); },
+  lastCardApp: function () { return glasshouseHome ? glasshouseHome.lastCardApp() : ''; },
   // Glasshouse Home, or a launcher in its place, off first: LG's Home keeps its place.
   homeOff: function (cb) {
     if (!glasshouseHome || !glasshouseHome.enabled()) return cb({ ok: true });
@@ -774,6 +849,7 @@ nosignal.init({ luna: luna, config: CONFIG, inputNames: telemetry.inputNameMap }
 nosignal.apply();
 telemetry.init({
   luna: luna,
+  lunaFirst: lunaTransport.callFirst,
   lunaCached: lunaCached,
   config: CONFIG,
   oled: oled,
@@ -798,7 +874,10 @@ var liveState = stateModule.init({
   },
   onTvChange: function (ev) {
     // Leaving an input drops game.js's bind, without waiting for someone to ask.
-    if (ev.group === 'application' && ev.key === 'app_id') game.appChanged(ev.value);
+    if (ev.group === 'application' && ev.key === 'app_id') {
+      game.appChanged(ev.value);
+      inputBanner.onAppChanged(ev.value, ev.snapshot);
+    }
     if (ev.group === 'power' && ev.key === 'state') {
       screensavers.onPowerChange(ev.value);
       pictureOnChanged(ev.value);
@@ -903,6 +982,7 @@ controls.init({
   lgSettings: lgSettings,
   updater: updater,
   updateAsk: updateAsk,
+  inputBanner: inputBanner,
   devtools: devtools,
   ntp: ntpClient,
   history: history,
@@ -1171,6 +1251,8 @@ updateAsk.init({
   },
   screenOn: function () { return pictureOn; }
 });
+// LG's input banner closed for the remote to reach an HDMI device at once (Inputs tab).
+inputBanner.init({ config: CONFIG, luna: luna, writeSettings: routes.writeSettings });
 
 // Bare in the user agent: a catalog has no use for the commit.
 fetchLib.init({ config: CONFIG, version: TVWEB_VERSION });
@@ -1203,11 +1285,20 @@ function appsChanged() {
 pointer.init({ luna: luna, hasService: lunaTransport.hasService, config: CONFIG,
   onActivity: function () { screensavers.pointerUsed(); },
   authed: function (req) { return routes.authed(url.parse(req.url || '/', true).query, req); } });
+barPress.init({
+  luna: luna,
+  foreground: function () { return (liveState.state.snapshot().application || {}).app || ''; }
+});
 routes.init({
+  // Where the gzipped dashboard page is kept between starts.
+  stateDir: __dirname,
+  barPress: barPress,
+  palmbus: palmbusInfo,
   config: CONFIG,
   audioLevels: audioLevels,
   pointer: pointer,
   inputBar: inputBar,
+  inputBanner: inputBanner,
   ask: askQuestion,
   audio: audioCapabilities,
   btAudio: btAudio,
@@ -1632,9 +1723,10 @@ function setupHomeAssistant() {
     entities = ha.filterWithholds(entities, {
       discPfx: discPfx,
       devId: devId,
-      publishFn: function (topic, payload, retain) {
+      // Withheld entities are cleared only once the TV's capabilities are known.
+      publishFn: capsSettled ? function (topic, payload, retain) {
         mqttClient.publish(topic, payload, retain);
-      },
+      } : null,
       capabilities: telemetry.getCapabilities({
         updateCheck: !!(CONFIG.update && CONFIG.update.check),
         isOled: oled.getIsOled(),
@@ -1646,7 +1738,7 @@ function setupHomeAssistant() {
 
     // Settings unsupported after an upgrade/removal must not leave retained controls.
     ha.HA_ENTITIES.forEach(function (entry) {
-      if (entry.id.indexOf('huesync_') !== 0) return;
+      if (!capsSettled || entry.id.indexOf('huesync_') !== 0) return;
       if (!entities.some(function (entity) { return entity.id === entry.id; })) {
         mqttClient.publish(discPfx + '/' + entry.type + '/' + devId + '/' + entry.id + '/config', '', true);
       }
@@ -1755,6 +1847,14 @@ function setupHomeAssistant() {
   var lastPub = null;
   var lastInputSig = '';
   var lastCapSig = '';
+  /*
+   * Whether a telemetry read has finished since the connection, so that what
+   * the TV can do is known. Until then nothing is cleared from Home Assistant:
+   * its entities from before the restart are retained on the broker, and an
+   * entity withheld only because its capability had not been read yet, such
+   * as Sound Format on a C2 (webOS 9.2), was taken away and put back 2 s later.
+   */
+  var capsSettled = false;
 
   /*
    * Switched off is a state of the TV, not a loss of it. While the TV is off
@@ -1842,6 +1942,8 @@ function setupHomeAssistant() {
      * the on (an OLED48CX8LC, a second of off on waking).
      */
     if (!statusOnReconnect.pending()) mqttClient.publish(mqttTopics.status, statusPayload(), true);
+    // The descriptions for ten minutes: re-read with the values, they were
+    // a fifth of the luna-send processes an idle TV with MQTT started.
     lgSettings.collect(LGS_SECTIONS, function (ls) {
     telemetry.collectStats(function(s) {
       // No collection has finished yet, as when the first after a cold boot
@@ -1982,12 +2084,13 @@ function setupHomeAssistant() {
         requestDiscoveryRepublish('network address');
       }
       var cap = telemetry.getCapabilitySignature();
-      if (cap !== lastCapSig) {
+      if (cap !== lastCapSig || !capsSettled) {
         lastCapSig = cap;
+        capsSettled = true;
         requestDiscoveryRepublish('capabilities');
       }
     });
-    });
+    }, 0, 600000);
   }
 
   mqttClient.on('connect', function() {
@@ -2003,17 +2106,19 @@ function setupHomeAssistant() {
     // first connect it would otherwise still be undetermined.
     // The app select's options come from listApps, which on a first connect
     // has not been scanned yet - without this it publishes the fallback list.
+    // Each read through the luna queue's first lane: behind the start's other
+    // calls, the first discovery came 6 s after the connection on a B8.
     oled.detectOled(function (isOled) {
       var afterOled = function () {
         telemetry.detectLogoLight(function () {
           telemetry.refreshInstalledApps(function () {
             // The Input Source select's options are the names the TV gives its
             // HDMI inputs, so read them before publishing its discovery.
-            telemetry.refreshInputNames(function () { publishDiscovery(); });
-          });
-        });
+            telemetry.refreshInputNames(function () { publishDiscovery(); }, true);
+          }, true);
+        }, true);
       };
-      if (isOled && oled.hasGsrStressCount() === null) oled.readOledProtections(afterOled);
+      if (isOled && oled.hasGsrStressCount() === null) oled.readOledProtections(afterOled, true);
       else afterOled();
     });
     mqttClient.subscribe(mqttTopics.commands + '#');

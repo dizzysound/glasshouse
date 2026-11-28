@@ -77,7 +77,7 @@ html,body{width:1920px;height:1080px;background:transparent;overflow:hidden;font
 </head>
 <body>
 <div id="shade"></div>
-<div id="head"><div id="hint">Home Assistant</div><div id="clock"></div></div>
+<div id="head"><div id="hint" translate="no">Home Assistant</div><div id="clock"></div></div>
 <div id="bar"><div id="row"></div></div>
 <script>
 /*
@@ -100,6 +100,10 @@ html,body{width:1920px;height:1080px;background:transparent;overflow:hidden;font
   var closeTimer = null;
   var clockTimer = null;
   var refreshTimer = null;
+  // How often the open bar asks this server again: the server's answer says,
+  // shorter where it serves a cache kept by Home Assistant's push or its own
+  // background refresh, so asking costs Home Assistant nothing.
+  var refreshMs = 5000;
   var seq = 0;
   var keyToken = (/[?&]k=([^&]+)/.exec(location.search) || [])[1] || '';
 
@@ -109,7 +113,19 @@ html,body{width:1920px;height:1080px;background:transparent;overflow:hidden;font
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
     });
   }
+  /*
+   * The bar's words, in the TV's menu language, come with each state answer
+   * (lib/habar.js barText): it is opened often from the remote, so it loads
+   * no translation file, as Glasshouse Bar and the input bar load none. Until
+   * the first answer, and where the server has none, the English stands.
+   */
+  var words = {};
+  function t(key, english) {
+    return Object.prototype.hasOwnProperty.call(words, key) && words[key] ? words[key] : english;
+  }
   function apiUrl(p) {
+    // bar=1: the server answers in the TV's menu language.
+    p += (p.indexOf('?') === -1 ? '?' : '&') + 'bar=1';
     if (!keyToken) return p;
     return p + (p.indexOf('?') === -1 ? '?' : '&') + 'k=' + keyToken;
   }
@@ -197,42 +213,42 @@ html,body{width:1920px;height:1080px;background:transparent;overflow:hidden;font
       return;
     }
     var cur = tiles[focus];
-    var parts = cur && cur.readOnly ? [] : [isOneShot(cur && cur.domain) ? 'OK run' : 'OK toggle'];
+    var parts = cur && cur.readOnly ? [] : [isOneShot(cur && cur.domain) ? t('habar.hint.run', 'OK run') : t('habar.hint.toggle', 'OK toggle')];
     if (cur && cur.adjustable) {
-      parts.push(cur.domain === 'climate' ? 'Up/Down temp' : 'Up/Down adjust');
+      parts.push(cur.domain === 'climate' ? t('habar.hint.temp', 'Up/Down temp') : t('habar.hint.adjust', 'Up/Down adjust'));
     }
-    parts.push('Back close');
+    parts.push(t('habar.hint.close', 'Back close'));
     $('hint').textContent = parts.join('  ·  ');
   }
-  function isFlashed(t) {
-    return !!(flashUntil[t.id] && flashUntil[t.id].until > Date.now());
+  function isFlashed(tile) {
+    return !!(flashUntil[tile.id] && flashUntil[tile.id].until > Date.now());
   }
-  function tileClass(t, i) {
-    return 'tile dom-' + t.domain +
-      (t.active ? ' active' : '') +
-      (t.adjustable ? ' adj' : '') +
-      (t.error ? ' err' : '') +
-      (isFlashed(t) ? ' flash' : '') +
+  function tileClass(tile, i) {
+    return 'tile dom-' + tile.domain +
+      (tile.active ? ' active' : '') +
+      (tile.adjustable ? ' adj' : '') +
+      (tile.error ? ' err' : '') +
+      (isFlashed(tile) ? ' flash' : '') +
       (i === focus ? ' focus' : '') +
-      (busyId === t.id ? ' busy' : '');
+      (busyId === tile.id ? ' busy' : '');
   }
-  function tileHtml(t, i) {
-    if (t.empty) {
-      return '<div class="tile wide focus" data-i="0"><div class="nm">' + esc(t.label) + '</div><div class="val">' + esc(t.valueText) + '</div></div>';
+  function tileHtml(tile, i) {
+    if (tile.empty) {
+      return '<div class="tile wide focus" data-i="0"><div class="nm">' + esc(tile.label) + '</div><div class="val">' + esc(tile.valueText) + '</div></div>';
     }
-    var flashed = isFlashed(t);
-    var valText = flashed ? flashUntil[t.id].text : t.valueText;
-    var meter = typeof t.pct === 'number' && t.active && !t.error
-      ? '<div class="meter"><div class="meter-fill" style="width:' + Math.max(0, Math.min(100, t.pct)) + '%"></div></div>'
+    var flashed = isFlashed(tile);
+    var valText = flashed ? flashUntil[tile.id].text : tile.valueText;
+    var meter = typeof tile.pct === 'number' && tile.active && !tile.error
+      ? '<div class="meter"><div class="meter-fill" style="width:' + Math.max(0, Math.min(100, tile.pct)) + '%"></div></div>'
       : '';
-    var subHtml = t.subText ? '<div class="sub">' + esc(t.subText) + '</div>' : '';
-    return '<div class="' + tileClass(t, i) + '" data-i="' + i + '">' +
-      '<div class="top"><div class="ico">' + iconSvg(t.domain, t.deviceClass) + '</div>' +
+    var subHtml = tile.subText ? '<div class="sub">' + esc(tile.subText) + '</div>' : '';
+    return '<div class="' + tileClass(tile, i) + '" data-i="' + i + '">' +
+      '<div class="top"><div class="ico">' + iconSvg(tile.domain, tile.deviceClass) + '</div>' +
       '<div class="arrows">' +
-        '<button type="button" class="step-btn" data-step="1" aria-label="Increase">&#9650;</button>' +
-        '<button type="button" class="step-btn" data-step="-1" aria-label="Decrease">&#9660;</button>' +
+        '<button type="button" class="step-btn" data-step="1" aria-label="' + esc(t('home.ha.increase', 'Increase')) + '">&#9650;</button>' +
+        '<button type="button" class="step-btn" data-step="-1" aria-label="' + esc(t('home.ha.decrease', 'Decrease')) + '">&#9660;</button>' +
       '</div></div>' +
-      '<div class="nm">' + esc(t.label) + '</div>' +
+      '<div class="nm">' + esc(tile.label) + '</div>' +
       '<div class="val">' + esc(valText) + '</div>' +
       subHtml +
       meter +
@@ -272,8 +288,8 @@ html,body{width:1920px;height:1080px;background:transparent;overflow:hidden;font
     focus = (i + tiles.length) % tiles.length;
     var nodes = $('row').childNodes;
     for (var k = 0; k < nodes.length; k++) {
-      var t = tiles[k];
-      if (t) nodes[k].className = tileClass(t, k);
+      var tile = tiles[k];
+      if (tile) nodes[k].className = tileClass(tile, k);
     }
     updateHint();
     if (!byPointer) scrollToFocus();
@@ -285,15 +301,20 @@ html,body{width:1920px;height:1080px;background:transparent;overflow:hidden;font
     clearInterval(clockTimer);
     tick();
     clockTimer = setInterval(tick, 15000);
+    armRefresh();
+    document.body.className = 'on';
+  }
+  function armRefresh() {
     clearInterval(refreshTimer);
     refreshTimer = setInterval(function () {
       if (!busyId && !closing && document.body.className === 'on') loadState(true);
-    }, 5000);
-    document.body.className = 'on';
+    }, refreshMs);
   }
   function close() {
     if (closing) return;
     closing = true;
+    // Closed here, not by the TV, which the server opens again (lib/barpress.js).
+    tellClosed();
     visibleSince = 0;
     clearInterval(clockTimer);
     clearInterval(refreshTimer);
@@ -310,20 +331,26 @@ html,body{width:1920px;height:1080px;background:transparent;overflow:hidden;font
   function loadState(silent) {
     var mySeq = ++seq;
     request('GET', '/api/ha/bar/state?t=' + Date.now(), null, function (j) {
+      if (j && j.text && typeof j.text === 'object') words = j.text;
       if (mySeq !== seq || closing) return;
       if (!j || !j.ok) {
-        if (!silent) showFallback('Home Assistant unavailable', 'Check the Glasshouse dashboard');
+        if (!silent) showFallback(t('habar.unavailable', 'Home Assistant unavailable'), t('habar.unavailableHint', 'Check the Glasshouse dashboard'));
         return;
       }
       useHour12 = !!j.hour12;
       showHints = j.showHints !== false;
+      var nextRefresh = j.refreshMs >= 500 ? j.refreshMs : 5000;
+      if (nextRefresh !== refreshMs) {
+        refreshMs = nextRefresh;
+        if (refreshTimer) armRefresh();
+      }
       tick();
       if (!j.configured) {
-        if (!silent) showFallback('Home Assistant is not configured', 'Set it up on the HA & MQTT tab');
+        if (!silent) showFallback(t('srv.habar.notConfigured', 'Home Assistant is not configured'), t('habar.setUp', 'Set it up on the HA & MQTT tab'));
         return;
       }
       if (!j.tiles || !j.tiles.length) {
-        if (!silent) showFallback('No entities on bar yet', 'Add entities on the HA & MQTT tab');
+        if (!silent) showFallback(t('habar.empty', 'No entities on bar yet'), t('habar.emptyHint', 'Add entities on the HA & MQTT tab'));
         return;
       }
       tiles = j.tiles;
@@ -332,14 +359,14 @@ html,body{width:1920px;height:1080px;background:transparent;overflow:hidden;font
       if (!silent && document.body.className !== 'on') openWindow();
     });
   }
-  function triggerFlash(t) {
-    flashUntil[t.id] = {
+  function triggerFlash(tile) {
+    flashUntil[tile.id] = {
       until: Date.now() + 1200,
-      text: t.domain === 'scene' ? 'Activated' : 'Ran'
+      text: tile.domain === 'scene' ? t('home.ha.activated', 'Activated') : t('home.ha.ran', 'Ran')
     };
     setTimeout(function () {
-      if (flashUntil[t.id] && flashUntil[t.id].until <= Date.now()) {
-        delete flashUntil[t.id];
+      if (flashUntil[tile.id] && flashUntil[tile.id].until <= Date.now()) {
+        delete flashUntil[tile.id];
         if (!closing && tiles.length) render(true);
       }
     }, 1250);
@@ -353,9 +380,10 @@ html,body{width:1920px;height:1080px;background:transparent;overflow:hidden;font
     if (busyId === cur.id) return;
     var targetId = cur.id;
     var targetDomain = cur.domain;
+    var targetState = cur.state;
     busyId = targetId;
     render(true);
-    request('POST', '/api/ha/bar/act', { id: targetId, action: action, value: value }, function (r) {
+    request('POST', '/api/ha/bar/act', { id: targetId, action: action, value: value, prevState: targetState }, function (r) {
       if (busyId === targetId) busyId = '';
       if (r && r.ok && r.tile) {
         for (var i = 0; i < tiles.length; i++) {
@@ -374,10 +402,25 @@ html,body{width:1920px;height:1080px;background:transparent;overflow:hidden;font
   function hidden() { return document.hidden === true || document.webkitHidden === true; }
   var initial = launchInfo();
   var seenPress = initial.press || 0;
+  // Each press, for the server, once the window is up for it: it launches a
+  // lost one again, with the same number, until it hears (lib/barpress.js).
+  // tellPress is one taken while hidden, told once the window shows.
+  var tellPress = 0;
+  function tell(press) { request('GET', '/api/bar/seen?app=com.tvweb.habar&press=' + press, null, function () {}); }
+  function tellClosed() { request('GET', '/api/bar/closed?app=com.tvweb.habar&press=' + seenPress, null, function () {}); }
+  function took(press) {
+    if (hidden()) { tellPress = press; return; }
+    tellPress = 0;
+    tell(press);
+  }
+  if (seenPress) took(seenPress);
   var idleUntilOpened = !!(initial.preload || /[?&]preload=1/.test(location.search) || (!seenPress && hidden()));
   var SECOND_PRESS_MS = 250;
   var visibleSince = hidden() ? 0 : Date.now();
-  function visibilityChanged() { visibleSince = hidden() ? 0 : (visibleSince || Date.now()); }
+  function visibilityChanged() {
+    visibleSince = hidden() ? 0 : (visibleSince || Date.now());
+    if (!hidden() && tellPress) { var press = tellPress; tellPress = 0; tell(press); }
+  }
   document.addEventListener('visibilitychange', visibilityChanged);
   document.addEventListener('webkitvisibilitychange', visibilityChanged);
   var SAME_PRESS_MS = 200;
@@ -392,8 +435,15 @@ html,body{width:1920px;height:1080px;background:transparent;overflow:hidden;font
     if (detail.preload) return;
     var at = Date.now();
     if (detail.press) {
-      if (detail.press === seenPress) return;
-      seenPress = detail.press;
+      if (detail.press === seenPress) {
+        // The same press sent again by the server: taken only where it never
+        // brought the bar up, the page hidden with nothing drawn. A repeat of
+        // one that opened or closed it is dropped.
+        if (closing || !hidden() || document.body.className === 'on') return;
+      } else {
+        seenPress = detail.press;
+      }
+      took(seenPress);
     } else {
       if (at - lastRelaunch < SAME_PRESS_MS) return;
       var shownFor = visibleSince ? at - visibleSince : 0;

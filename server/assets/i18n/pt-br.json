@@ -636,10 +636,6 @@
  "home.motion.crossfade": {"text": "Transição suave do papel de parede", "from": "Wallpaper cross-fade"},
  "home.motion.crossfadeDesc": {"text": "A imagem se funde na seguinte quando o período do dia muda, em vez de trocar de uma vez.", "from": "The picture fades into the next when the part of the day changes, rather than switching at once."},
  "home.motion.drift": {"text": "Movimento do papel de parede", "from": "Wallpaper drift"},
- "oled.slots": {"text": "Arquivos de calibração salvos", "from": "Stored calibration files"},
- "oled.slots.note": {"text": "Estado salvo, lido dos arquivos da TV. Uma gravação de calibração não salva fica na memória e não aparece aqui, e cada arquivo pertence ao modo de imagem em que uma calibração foi iniciada, não ao modo exibido na tela.", "from": "Stored state, read from the files on the TV. A calibration write that is not saved stays in memory and does not show here, and each file belongs to the picture mode a calibration was started in, not the mode on screen."},
- "oled.slots.size": {"text": "{n} bytes", "from": "{n} bytes"},
- "oled.slots.badSize": {"text": "tamanho inesperado", "from": "unexpected size"},
  "home.motion.driftDesc": {"text": "O papel de parede se desloca lateralmente bem devagar, para nunca ficar parado na tela.", "from": "The wallpaper shifts sideways very slowly, so it never sits still on the screen."},
  "home.motion.scroll": {"text": "Rolagem suave", "from": "Smooth scrolling"},
  "home.motion.scrollDesc": {"text": "Uma fileira desliza até o bloco escolhido, em vez de pular para ele.", "from": "A row glides to the chosen tile, rather than jumping to it."},
@@ -3221,6 +3217,8 @@
  "ha.token.set": {"text": "Um token está configurado. Deixe em branco para mantê-lo.", "from": "A token is set. Leave blank to keep it."},
  "ha.url": {"text": "Endereço do Home Assistant", "from": "Home Assistant address"},
  "ha.url.hint": {"text": "Endereço e porta da sua instância do Home Assistant.", "from": "Address and port of your Home Assistant instance."},
+ "ha.updateMode.wsPushing": {"text": "enviando alterações", "from": "pushing changes"},
+ "ha.updateMode.wsReconnecting": {"text": "reconectando…", "from": "reconnecting…"},
  "srv.saver.badEntities": {"text": "{file}: entities precisa de nomes curtos, cada um com um ID de entidade do Home Assistant como sensor.outdoor_temperature, até {max}.", "from": "{file}: entities needs short names, each with a Home Assistant entity id such as sensor.outdoor_temperature, up to {max} of them."},
  "srv.saver.haUses": {"text": "{file}: entities e \"ha\" ou \"ha-all\" em uses vão juntos.", "from": "{file}: entities and \"ha\" or \"ha-all\" in uses go together."},
  "srv.saver.undeclaredHa": {"text": "{main} usa {placeholder}, e saver.json não nomeia essa entidade sob entities.", "from": "{main} uses {placeholder}, and saver.json does not name that entity under entities."},
@@ -4011,5 +4009,12 @@
  "audio.bar.tone": {"from": "Tone controls", "text": "Controles de tonalidade"},
  "audio.bar.device": {"from": "Device settings", "text": "Configurações do dispositivo"},
  "audio.bar.volume": {"from": "Soundbar volume", "text": "Volume da soundbar"},
- "audio.bar.tvVolume": {"from": "TV-reported volume: {value}", "text": "Volume informado pela TV: {value}"}
+ "audio.bar.tvVolume": {"from": "TV-reported volume: {value}", "text": "Volume informado pela TV: {value}"},
+ "inputs.banner": {"from": "Input banner", "text": "Banner da entrada"},
+ "inputs.banner.close": {"from": "Close the input banner at once", "text": "Fechar o banner da entrada na hora"},
+ "inputs.banner.closeDesc": {"from": "Switching to an HDMI input shows LG’s banner with its name for 5 seconds, and until it goes the remote does not reach the device. With this on, Glasshouse closes it 2 seconds in, so the remote works on the device straight away. Only for inputs with a device that the TV controls over HDMI-CEC (SIMPLINK).", "text": "Ao mudar para uma entrada HDMI, a LG mostra um banner com o nome dela por 5 segundos e, até ele sumir, o controle não chega ao aparelho. Com isto ligado, o Glasshouse o fecha após 2 segundos, e o controle comanda o aparelho na hora. Só para entradas com um aparelho que a TV controla por HDMI-CEC (SIMPLINK)."},
+ "oled.slots": {"text": "Arquivos de calibração salvos", "from": "Stored calibration files"},
+ "oled.slots.note": {"text": "Estado salvo, lido dos arquivos da TV. Uma gravação de calibração não salva fica na memória e não aparece aqui, e cada arquivo pertence ao modo de imagem em que uma calibração foi iniciada, não ao modo exibido na tela.", "from": "Stored state, read from the files on the TV. A calibration write that is not saved stays in memory and does not show here, and each file belongs to the picture mode a calibration was started in, not the mode on screen."},
+ "oled.slots.size": {"text": "{n} bytes", "from": "{n} bytes"},
+ "oled.slots.badSize": {"text": "tamanho inesperado", "from": "unexpected size"}
 }

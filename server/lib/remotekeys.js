@@ -389,6 +389,7 @@ var homeBarLauncherFn = function () { return false; };
 var haBarAppFn = null;
 var haBarAllowedFn = function () { return false; };
 var haBarKeySetFn = null;
+var haBarKeptFn = function () { return false; };
 // Whether the bar's app can be put on this TV and kept loaded, which the brightness keys' on-screen level needs.
 function barAvailable() { return !!barAppFn && barAllowedFn(); }
 var inputNames = null;
@@ -454,6 +455,7 @@ function init(opts) {
   haBarAppFn = typeof opts.haBarApp === 'function' ? opts.haBarApp : null;
   haBarAllowedFn = typeof opts.haBarAllowed === 'function' ? opts.haBarAllowed : function () { return false; };
   haBarKeySetFn = typeof opts.onHaBarKey === 'function' ? opts.onHaBarKey : null;
+  haBarKeptFn = typeof opts.haBarKept === 'function' ? opts.haBarKept : function () { return false; };
   inputNames = opts.inputNames || {};
   if (opts.stateDir) stateDir = opts.stateDir;
   guidePatch.init({ stateDir: stateDir, library: opts.guideLibrary, systemUiLibrary: opts.systemUiLibrary, preProcessLibrary: opts.preProcessLibrary,
@@ -835,10 +837,37 @@ function filterSource() {
     '    var run = ++glasshouseBrightnessRun;',
     '    try { genericTimer.set(1500, function () { if (run === glasshouseBrightnessRun) glasshouseBrightnessBusy = false; }); } catch (e) {}',
     // A repeat of the press still held goes on from the level it wrote; the press itself, and each new one, reads.
-    '    if (glasshouseBrightnessLevel >= 0 && glasshouseBrightnessSteps > 0 && press === glasshouseBrightnessPress) {',
-    '        glasshouseBrightnessWrite(direction, press, delta, glasshouseBrightnessLevel);',
-    '        return;',
+    '    var known = glasshouseBrightnessLevel >= 0 && glasshouseBrightnessSteps > 0 && press === glasshouseBrightnessPress ? glasshouseBrightnessLevel : -1;',
+    '    glasshouseBrightnessAsk(direction, press, delta, known);',
+    '}',
+    // The server steps it, with its own luna calls: on webOS 4 lunaCall.send
+    // cancels its request a moment after sending it and never calls back, so
+    // the level could not be read here (#1815). Here only where the server
+    // does not answer, as on webOS 5 and later the compositor's calls work.
+    'function glasshouseBrightnessAsk(direction, press, delta, known) {',
+    '    try {',
+    '        var x = new XMLHttpRequest();',
+    '        x.onreadystatechange = function () {',
+    '            if (x.readyState !== 4) return;',
+    '            var r = null;',
+    '            try { r = JSON.parse(x.responseText); } catch (e) {}',
+    '            if (x.status === 200 && r && r.ok && typeof r.level === "number") {',
+    '                glasshouseBrightnessLevel = r.level;',
+    '                glasshouseBrightnessShow(r.level, press);',
+    '                glasshouseBrightnessNext(direction, r.unchanged === true || r.level === 0 || r.level === 100, press);',
+    '                return;',
+    '            }',
+    '            glasshouseBrightnessHere(direction, press, delta, known);',
+    '        };',
+    '        x.open("POST", "http://127.0.0.1:' + serverPort + '/api/remotekeys/brightness");',
+    '        x.setRequestHeader("Content-Type", "application/json");',
+    '        x.send(JSON.stringify({ "delta": delta, "from": known >= 0 ? known : null }));',
+    '    } catch (e) {',
+    '        glasshouseBrightnessHere(direction, press, delta, known);',
     '    }',
+    '}',
+    'function glasshouseBrightnessHere(direction, press, delta, known) {',
+    '    if (known >= 0) return glasshouseBrightnessWrite(direction, press, delta, known);',
     '    lunaCall.send("com.webos.service.settings", "/getSystemSettings", JSON.stringify({ "category": "picture", "keys": ["backlight"] }), function (payload) {',
     '        try {',
     '            var r = typeof payload === "string" ? JSON.parse(payload) : payload;',
@@ -906,6 +935,17 @@ function filterSource() {
     '    } catch (e) {',
     '        glasshouseTogglePiccapHere();',
     '    }',
+    '}',
+    // A bar's page loading again after a close loses a press made meanwhile,
+    // though the launch is accepted: the server launches it again where the
+    // page does not say it had it (lib/barpress.js).
+    'function glasshouseTellBarPress(id, press) {',
+    '    try {',
+    '        var x = new XMLHttpRequest();',
+    '        x.open("POST", "http://127.0.0.1:' + serverPort + '/api/bar/press");',
+    '        x.setRequestHeader("Content-Type", "application/json");',
+    '        x.send(JSON.stringify({ "app": id, "press": press }));',
+    '    } catch (e) {}',
     '}',
     'function glasshouseTogglePiccapHere() {',
     '    lunaCall.send("org.webosbrew.piccap.service", "/status", "{}", function (payload) {',
@@ -1037,9 +1077,11 @@ function filterSource() {
     // Home opened as the Home key opens it, so Glasshouse Home opens as Home;
     // Glasshouse Bar carries a per-press sequence number so duplicate relaunches
     // can be dropped without swallowing rapid open/close toggles.
+    '            var glasshouseBar = id === ' + JSON.stringify(HOME_BAR) + ' || id === ' + JSON.stringify(HA_BAR) + ';',
     '            applicationManager.launch(id, id === ' + JSON.stringify(HOME_APP),
     '                ? JSON.stringify({ "activateType": "home", "launchType": "homeKey" })',
-    '                : ((id === ' + JSON.stringify(HOME_BAR) + ' || id === ' + JSON.stringify(HA_BAR) + ') ? JSON.stringify({ "glasshouse": "bar", "press": ++glasshouseBarPress }) : "{}"));',
+    '                : (glasshouseBar ? JSON.stringify({ "glasshouse": "bar", "press": ++glasshouseBarPress }) : "{}"));',
+    '            if (glasshouseBar) glasshouseTellBarPress(id, glasshouseBarPress);',
     '        }',
     '        return KeyPolicy.Accepted;',
     '    } catch (e) {',
@@ -1163,14 +1205,23 @@ function apply(cb) {
     var current = null;
     try { current = fs.readFileSync(filterFile(), 'utf8'); } catch (e) {}
     var changed = current !== src;
-    if (changed) {
+    // The new file is written only once the filter is out of the chain, or
+    // was never in it, so that putting it in is what follows. Written while
+    // the chain still named it, a server that stopped before rewriting the
+    // chain left the compositor running the old filter for good: the next
+    // start found the file already current and wrote nothing (an
+    // OLED65B8SLC, webOS 4.4.3, after an update).
+    function writeFile() {
+      if (!changed) return true;
       try {
         fs.writeFileSync(filterFile(), src, 'utf8');
+        return true;
       } catch (e) {
         console.log('remotekeys: could not write ' + filterFile() + ': ' + e.message);
-        return cb(false);
+        return false;
       }
     }
+    if (!inChain && !writeFile()) return cb(false);
     writeKeys(map, function (ok) {
       if (!ok) return cb(false);
       var rest = withoutOurs(list);
@@ -1193,6 +1244,7 @@ function apply(cb) {
       // running the old file through two rewrites of it).
       writeChain(rest, function (ok2) {
         if (!ok2) return cb(false);
+        if (!writeFile()) return cb(false);
         writeChain(full, done);
       });
     }, home, starting);
@@ -1948,10 +2000,44 @@ function buttonPressed(button) {
   });
 }
 
+/*
+ * A Brightness key's step, asked of the server by the filter (routes.js):
+ * on webOS 4 the compositor's lunaCall.send cancels its request a moment after
+ * sending it and never calls back, so the filter could not read the level, and
+ * the key did nothing (an OLED65B8SLC and a 65SK8100PLA, firmware 05.50.70,
+ * #1815). from is the level the filter knows, for a step of a key held down,
+ * or null to read it. cb({ ok, level, unchanged }).
+ */
+function brightnessFromFilter(delta, from, cb) {
+  cb = cb || function () {};
+  if (!lunaFn) return cb({ ok: false, error: 'no luna' });
+  delta = Math.max(-100, Math.min(100, Math.round(Number(delta) || 0)));
+  function write(current) {
+    var level = Math.max(0, Math.min(100, current + delta));
+    if (level === current) return cb({ ok: true, level: current, unchanged: true });
+    lunaFn('com.webos.service.settings/setSystemSettings', { category: 'picture', settings: { backlight: String(level) } }, function (w) {
+      if (!(w && w.returnValue)) {
+        console.log('remotekeys: brightness could not be set to ' + level);
+        return cb({ ok: false, error: 'not set', level: current });
+      }
+      cb({ ok: true, level: level });
+    });
+  }
+  if (typeof from === 'number' && from >= 0 && from <= 100) return write(Math.round(from));
+  lunaFn('com.webos.service.settings/getSystemSettings', { category: 'picture', keys: ['backlight'] }, function (r) {
+    var current = r && r.settings ? parseFloat(r.settings.backlight) : NaN;
+    if (isNaN(current)) {
+      console.log('remotekeys: brightness not changed: the TV did not give its level');
+      return cb({ ok: false, error: 'the TV did not give its level' });
+    }
+    write(Math.round(current));
+  });
+}
+
 // The filter's Ambient light key, asked of the server (routes.js). cb({ ok }).
 function piccapFromFilter(cb) {
   cb = cb || function () {};
-  if (!piccapToggleFn) return cb({ ok: false, error: 'PicCap is not available' });
+  if (!piccapToggleFn) return cb({ ok: false, error: msg('srv.piccap.unavailable', 'PicCap is not available') });
   console.log('remotekeys: a key toggles PicCap');
   piccapToggleFn(function (r) {
     if (!r || !r.ok) console.log('remotekeys: could not toggle PicCap' + (r && r.error ? ': ' + r.error : ''));
@@ -1969,7 +2055,7 @@ function togglePiccapFromPress() {
   if (piccapToggleFn) return piccapToggleFn(done);
   lunaFn('org.webosbrew.piccap.service/status', {}, function (r) {
     if (!r || r.returnValue === false || typeof r.isRunning !== 'boolean') {
-      return done({ ok: false, error: 'PicCap did not answer' });
+      return done({ ok: false, error: msg('srv.piccap.noAnswer', 'PicCap did not answer') });
     }
     lunaFn('org.webosbrew.piccap.service/' + (r.isRunning ? 'stop' : 'start'), {}, function (w) {
       done({ ok: !!(w && w.returnValue !== false) });
@@ -2240,9 +2326,9 @@ function dropHomeBarIfUnused(hadBar) {
   });
 }
 
-// Home Assistant bar's app, removed once no key opens it.
+// Home Assistant bar's app, removed once no key or Glasshouse Bar shortcut opens it.
 function dropHaBarIfUnused(hadBar) {
-  if (!hadBar || opensHaBar() || !haBarAppFn) return;
+  if (!hadBar || opensHaBar() || !haBarAppFn || haBarKeptFn()) return;
   haBarAppFn('remove', function (r) {
     if (!r || !r.ok) console.log('remotekeys: could not remove Home Assistant bar\'s app: ' + ((r && r.error) || 'no answer'));
   });
@@ -2253,7 +2339,7 @@ function appChoices(apps) {
   var seen = {};
   return (apps || []).filter(function (a) {
     if (!a || !a.id || seen[a.id] || a.visible === false) return false;
-    if (a.id === LIVE_TV || /^com\.webos\.app\.(hdmi|container)/.test(a.id)) return false;
+    if (a.id === LIVE_TV || a.id === HA_BAR || /^com\.webos\.app\.(hdmi|container)/.test(a.id)) return false;
     seen[a.id] = true;
     return true;
   }).map(function (a) {
@@ -2834,7 +2920,7 @@ function restoreKeys(done, native) {
   var barThere = opensInputBar() || fs.existsSync(INPUT_BAR_DIR);
   // Glasshouse Bar's app stays while it is the launcher: lib/homebar removes it then.
   var homeBarGoes = opensHomeBar() && !homeBarLauncherFn();
-  var haBarGoes = opensHaBar();
+  var haBarGoes = opensHaBar() && !haBarKeptFn();
   function cb(ok) {
     if (ok) {
       followColorButtons({});
@@ -2944,6 +3030,7 @@ module.exports = {
   homeAdjustLast: homeAdjustLast,
   setBrightnessBarStyle: setBrightnessBarStyle,
   getBrightness: levelBar.getBrightness,
+  brightnessFromFilter: brightnessFromFilter,
   setRemoteSelection: setRemoteSelection,
   setStarting: setStarting,
   homeApp: readHome,

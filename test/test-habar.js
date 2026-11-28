@@ -15,6 +15,20 @@ var waitFor = require('./wait-for').waitFor;
 
 console.log('Running test-habar.js ...');
 
+// The Home Assistant bar loads no translation file: its words come from the
+// server in the TV's menu language, English where there is no translation.
+(function () {
+  var say = require('../server/lib/say');
+  say.init(path.join(__dirname, '..', 'server', 'assets', 'i18n'));
+  var en = haBar.barText('');
+  assert.strictEqual(Object.keys(en).length, 15);
+  assert.strictEqual(en['habar.hint.close'], 'Back close');
+  assert.strictEqual(haBar.barText('en-GB')['habar.empty'], 'No entities on bar yet');
+  var ru = haBar.barText('ru-RU');
+  assert.ok(ru['habar.hint.close'] && ru['habar.hint.close'] !== 'Back close', 'Russian: ' + ru['habar.hint.close']);
+  console.log('  \u2713 the bar\'s words come in the TV\'s menu language, English where there is none');
+})();
+
 var dir = path.join(os.tmpdir(), 'habar-' + process.pid);
 fs.mkdirSync(dir);
 
@@ -62,10 +76,23 @@ var states = {
   'scene.movie': {
     state: 'scening',
     attributes: { friendly_name: 'Movie Time' }
+  },
+  // A light whose integration confirms a toggle only after a short real
+  // delay, as an MQTT round trip or a HomeKit bridge poll would (#1795).
+  'light.slow': {
+    state: 'on',
+    attributes: { friendly_name: 'Slow Lamp' }
+  },
+  // A light whose toggle is accepted but never confirmed: the retry must
+  // give up rather than wait forever.
+  'light.stuck': {
+    state: 'on',
+    attributes: { friendly_name: 'Stuck Lamp' }
   }
 };
 
 var serviceCalls = [];
+var reads = {};
 var server = http.createServer(function (req, res) {
   var chunks = [];
   req.on('data', function (c) { chunks.push(c); });
@@ -73,6 +100,7 @@ var server = http.createServer(function (req, res) {
     assert.strictEqual(req.headers.authorization, 'Bearer test-token');
     if (req.method === 'GET' && req.url.indexOf('/api/states/') === 0) {
       var id = decodeURIComponent(req.url.slice('/api/states/'.length));
+      reads[id] = (reads[id] || 0) + 1;
       var ent = states[id];
       if (!ent) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -104,7 +132,11 @@ var server = http.createServer(function (req, res) {
         states['lock.front'].state = parts[1] === 'unlock' ? 'unlocked' : 'locked';
       } else if (body.entity_id === 'cover.blinds') {
         states['cover.blinds'].state = parts[1] === 'close_cover' ? 'closed' : 'open';
+      } else if (body.entity_id === 'light.slow' && parts[1] === 'toggle') {
+        var slowTarget = states['light.slow'].state === 'on' ? 'off' : 'on';
+        setTimeout(function () { states['light.slow'].state = slowTarget; }, 25);
       }
+      // light.stuck: the call is accepted but the state never moves.
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify([]));
     }
@@ -122,7 +154,7 @@ server.listen(0, '127.0.0.1', function () {
   var port = server.address().port;
   haEntity.init({
     config: {
-      homeAssistant: { enabled: true, url: 'http://127.0.0.1:' + port, token: 'test-token' }
+      homeAssistant: { enabled: true, url: 'http://127.0.0.1:' + port, token: 'test-token', updateMode: 'polling' }
     }
   });
   haBar.init({
@@ -153,11 +185,13 @@ server.listen(0, '127.0.0.1', function () {
     { id: 'fan.bedroom', label: '' },
     { id: 'cover.blinds', label: '' },
     { id: 'lock.front', label: '' },
-    { id: 'scene.movie', label: '' }
+    { id: 'scene.movie', label: '' },
+    { id: 'light.slow', label: '' },
+    { id: 'light.stuck', label: '' }
   ]);
   assert.strictEqual(saved.ok, true);
   assert.strictEqual(saved.showHints, true);
-  assert.strictEqual(saved.entities.length, 7);
+  assert.strictEqual(saved.entities.length, 9);
   assert.strictEqual(haBar.listConfig().entities[0].label, 'Desk');
   assert.strictEqual(haBar.listConfig().showHints, true);
   assert.strictEqual(haBar.setOptions({ bad: true }).ok, false);
@@ -188,7 +222,9 @@ server.listen(0, '127.0.0.1', function () {
         assert.strictEqual(st.configured, true);
         assert.strictEqual(st.hour12, true);
         assert.strictEqual(st.showHints, true);
-        assert.strictEqual(st.tiles.length, 7);
+        assert.strictEqual(st.refreshMs, 5000, 'every ask reaches Home Assistant without a cache, so the bar keeps to 5 s');
+        assert.strictEqual(st.cached, false, 'Glasshouse Home\'s row keeps its own pace without a cache');
+        assert.strictEqual(st.tiles.length, 9);
         assert.strictEqual(st.tiles[0].label, 'Desk');
         assert.strictEqual(st.tiles[0].pct, 50);
         assert.strictEqual(st.tiles[0].adjustable, true);
@@ -247,6 +283,22 @@ server.listen(0, '127.0.0.1', function () {
                         assert.strictEqual(serviceCalls.some(function (c) { return c.domain === 'scene' && c.service === 'turn_on'; }), true);
                         console.log('  \u2713 act executes toggle and step safely across domains');
 
+                        // 7b. A toggle confirmed late (#1795): the tile waits for the state to
+                        // actually move away from what it was, not just one quick read.
+                        haBar.act('light.slow', 'toggle', null, 'on', function (rSlow) {
+                          assert.strictEqual(rSlow.ok, true);
+                          assert.strictEqual(rSlow.tile.active, false, 'the confirmed state is off, not the stale read');
+                          assert.ok(reads['light.slow'] > 1, 'more than one read was needed to see the change');
+
+                          // A toggle that never confirms still returns the service result,
+                          // bounded, rather than waiting forever.
+                          var stuckReadsBefore = reads['light.stuck'] || 0;
+                          haBar.act('light.stuck', 'toggle', null, 'on', function (rStuck) {
+                            assert.strictEqual(rStuck.ok, true);
+                            assert.strictEqual(rStuck.tile.active, true, 'still the last known state once retries are exhausted');
+                            assert.strictEqual(reads['light.stuck'] - stuckReadsBefore, 6, 'gave up after the initial read plus 5 retries');
+                            console.log('  \u2713 a late or missing state confirmation is retried, then bounded');
+
                         // 8. Backup part round-trip
                         backupParts.init({ habar: haBar });
                         var part = backupParts.PARTS.filter(function (p) { return p.id === 'haBar'; })[0];
@@ -254,13 +306,15 @@ server.listen(0, '127.0.0.1', function () {
                         assert.strictEqual(part.valid([{ id: 'light.desk', label: 'Desk' }]), true);
                         assert.strictEqual(part.valid([{ id: 'bad' }]), false);
                         part.read(function (readEnts) {
-                          assert.strictEqual(readEnts.length, 7);
+                          assert.strictEqual(readEnts.length, 9);
                           part.write([{ id: 'switch.kettle', label: 'Tea' }], function (wr) {
                             assert.strictEqual(wr.ok, true);
                             assert.deepEqual(haBar.listConfig().entities, [{ id: 'switch.kettle', label: 'Tea' }]);
                             console.log('  \u2713 backup part reads and restores haBar entities');
 
                             // 9. Quick Access integration
+                            var haAppInfo = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'server', 'assets', 'habar-app', 'appinfo.json'), 'utf8'));
+                            assert.notStrictEqual(haAppInfo.visible, false, 'habar-app stays visible so Quick Access resolves its launch point (#1786)');
                             var qaMagic = {};
                             for (var n = 1; n <= 9; n++) qaMagic['magicNum' + n] = { id: '', params: {} };
                             var qaInstalled = 0, qaKeySet = 0;
@@ -283,33 +337,42 @@ server.listen(0, '127.0.0.1', function () {
                                   return setImmediate(function () { cb({ returnValue: true }); });
                                 }
                                 if (uri === 'com.webos.applicationManager/listApps') {
-                                  return setImmediate(function () { cb({ apps: [{ id: 'netflix', title: 'Netflix' }] }); });
+                                  return setImmediate(function () {
+                                    cb({ apps: [{ id: 'netflix', title: 'Netflix' }, { id: 'com.tvweb.habar', title: 'Home Assistant Bar' }] });
+                                  });
                                 }
                                 setImmediate(function () { cb({ returnValue: true }); });
                               }
                             });
                             quickAccess.getQuickAccess(function (qa) {
-                              assert.strictEqual(qa.choices.some(function (c) { return c.id === 'com.tvweb.habar'; }), true);
+                              assert.strictEqual(qa.choices.filter(function (c) { return c.id === 'com.tvweb.habar'; }).length, 1,
+                                'Home Assistant bar is offered once in Quick Access choices');
                               quickAccess.setQuickAccess(1, 'com.tvweb.habar', function (rQa) {
                                 assert.strictEqual(rQa.ok, true);
                                 assert.strictEqual(qaInstalled, 1);
                                 assert.strictEqual(qaKeySet, 1);
                                 assert.strictEqual(quickAccess.opensHaBar(), true);
-                                console.log('  \u2713 Quick Access offers and installs Home Assistant bar');
+                                quickAccess.setQuickAccess(1, '', function (rClear) {
+                                  assert.strictEqual(rClear.ok, true);
+                                  assert.strictEqual(quickAccess.opensHaBar(), false, 'clearing the key clears opensHaBar()');
+                                  console.log('  \u2713 Quick Access offers and installs Home Assistant bar');
 
-                                // Clearing entities removes habar.json
-                                var cleared = haBar.saveConfig([]);
-                                assert.strictEqual(cleared.ok, true);
-                                assert.strictEqual(fs.existsSync(path.join(dir, 'habar.json')), false);
-                                server.close(function () {
-                                  cleanup();
-                                  console.log('ALL test-habar.js assertions passed!');
+                                  // Clearing entities removes habar.json
+                                  var cleared = haBar.saveConfig([]);
+                                  assert.strictEqual(cleared.ok, true);
+                                  assert.strictEqual(fs.existsSync(path.join(dir, 'habar.json')), false);
+                                  server.close(function () {
+                                    cleanup();
+                                    console.log('ALL test-habar.js assertions passed!');
+                                  });
                                 });
                               });
                             });
                           });
                         });
                       });
+                      });
+                    });
                     });
                   });
                 });
